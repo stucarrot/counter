@@ -7,212 +7,75 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="문제 카운터">
+<meta name="apple-mobile-web-app-title" content="카운터">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<title>문제 카운터</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-
-  :root {
-    --black: #000;
-    --white: #fff;
-    --gray-100: #f5f5f5;
-    --gray-200: #e8e8e8;
-    --gray-400: #aaa;
-    --gray-600: #555;
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-  }
-
-  html, body {
-    height: 100%;
-    font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif;
-    background: var(--white);
-    color: var(--black);
-    overflow: hidden;
-  }
-
-  #app {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    max-width: 480px;
-    margin: 0 auto;
-  }
-
-  /* Header */
-  .topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px 12px;
-    padding-top: calc(16px + env(safe-area-inset-top, 0px));
-    border-bottom: 1px solid var(--gray-200);
-    background: var(--white);
-    flex-shrink: 0;
-  }
-  .topbar h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
-  .btn-add {
-    display: flex; align-items: center; gap: 5px;
-    background: var(--black); color: var(--white);
-    border: none; border-radius: 8px;
-    padding: 9px 15px; font-size: 14px; font-weight: 500;
-    cursor: pointer; transition: opacity .15s;
-  }
-  .btn-add:active { opacity: .7; }
-  .btn-add svg { width: 16px; height: 16px; }
-
-  /* List */
-  #list {
-    flex: 1;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding: 12px 16px;
-    padding-bottom: calc(12px + var(--safe-bottom));
-  }
-
-  .empty {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    height: 60%; color: var(--gray-400); text-align: center; gap: 10px;
-  }
-  .empty svg { width: 48px; height: 48px; opacity: .3; }
-  .empty p { font-size: 15px; }
-
-  /* Counter card */
-  .card {
-    border: 1px solid var(--black);
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 12px;
-    background: var(--white);
-  }
-  .card-header {
-    display: flex; justify-content: space-between; align-items: flex-start;
-    margin-bottom: 14px;
-  }
-  .card-title { font-size: 17px; font-weight: 600; letter-spacing: -0.2px; line-height: 1.3; flex: 1; margin-right: 10px; }
-  .card-btns { display: flex; gap: 6px; flex-shrink: 0; }
-  .icon-btn {
-    width: 32px; height: 32px; border: 1px solid var(--black);
-    border-radius: 7px; background: none; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: background .1s;
-  }
-  .icon-btn:active { background: var(--gray-100); }
-  .icon-btn svg { width: 16px; height: 16px; }
-
-  /* Counter controls */
-  .card-body { display: flex; align-items: center; gap: 12px; }
-  .ctrl-row { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-  .ctrl-btn {
-    width: 40px; height: 40px; border: 1px solid var(--black);
-    border-radius: 8px; background: none; cursor: pointer;
-    font-size: 22px; line-height: 1; font-weight: 300; color: var(--black);
-    display: flex; align-items: center; justify-content: center;
-    transition: background .1s; user-select: none;
-  }
-  .ctrl-btn:active { background: var(--gray-100); }
-  .ctrl-btn:disabled { opacity: .25; cursor: default; }
-  .ctrl-btn:disabled:active { background: none; }
-  .fraction {
-    font-size: 24px; font-weight: 600; letter-spacing: -0.5px;
-    min-width: 72px; text-align: center; line-height: 1;
-  }
-  .fraction span { font-size: 16px; font-weight: 400; color: var(--gray-600); }
-
-  /* Progress */
-  .prog-wrap { flex: 1; }
-  .prog-bar {
-    height: 5px; background: var(--gray-200);
-    border-radius: 3px; overflow: hidden; margin-bottom: 5px;
-  }
-  .prog-fill { height: 100%; background: var(--black); border-radius: 3px; transition: width .25s ease; }
-  .prog-label { font-size: 12px; color: var(--gray-600); text-align: right; }
-
-  /* Modal overlay */
-  .overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,.4); z-index: 100;
-    align-items: flex-end; justify-content: center;
-  }
-  .overlay.open { display: flex; }
-
-  .sheet {
-    background: var(--white); width: 100%; max-width: 480px;
-    border-radius: 18px 18px 0 0;
-    padding: 24px 20px calc(24px + var(--safe-bottom));
-    animation: slideUp .22s ease;
-  }
-  @keyframes slideUp { from { transform: translateY(40px); opacity:0; } to { transform: none; opacity:1; } }
-
-  .sheet-handle { width: 36px; height: 4px; background: var(--gray-200); border-radius: 2px; margin: 0 auto 20px; }
-  .sheet h2 { font-size: 17px; font-weight: 600; margin-bottom: 18px; }
-
-  .field { margin-bottom: 14px; }
-  .field label { font-size: 12px; color: var(--gray-600); display: block; margin-bottom: 5px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
-  .field input {
-    width: 100%; border: 1px solid var(--black); border-radius: 8px;
-    padding: 12px 14px; font-size: 16px; color: var(--black); background: var(--white);
-    -webkit-appearance: none; appearance: none;
-  }
-  .field input:focus { outline: 2px solid var(--black); outline-offset: -1px; }
-
-  .sheet-actions { display: flex; gap: 10px; margin-top: 20px; }
-  .btn-cancel {
-    flex: 1; padding: 13px; border: 1px solid var(--black);
-    border-radius: 10px; background: none; font-size: 15px; font-weight: 500;
-    cursor: pointer; color: var(--black);
-  }
-  .btn-cancel:active { background: var(--gray-100); }
-  .btn-save {
-    flex: 2; padding: 13px; border: none;
-    border-radius: 10px; background: var(--black); color: var(--white);
-    font-size: 15px; font-weight: 600; cursor: pointer;
-  }
-  .btn-save:active { opacity: .8; }
-
-  /* Confirm sheet */
-  .confirm-sheet { padding: 28px 20px calc(28px + var(--safe-bottom)); text-align: center; }
-  .confirm-sheet p { font-size: 15px; line-height: 1.6; color: var(--gray-600); margin-bottom: 22px; }
-  .confirm-sheet strong { color: var(--black); }
-  .btn-delete {
-    width: 100%; padding: 13px; border: none; border-radius: 10px;
-    background: var(--black); color: var(--white);
-    font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 10px;
-  }
-  .btn-delete:active { opacity: .8; }
-  .btn-keep {
-    width: 100%; padding: 13px; border: 1px solid var(--black); border-radius: 10px;
-    background: none; font-size: 15px; font-weight: 500; cursor: pointer; color: var(--black);
-  }
-  .btn-keep:active { background: var(--gray-100); }
-
-  /* Install banner */
-  #install-banner {
-    display: none; align-items: center; justify-content: space-between;
-    padding: 10px 16px; background: var(--black); color: var(--white);
-    font-size: 13px; flex-shrink: 0;
-    padding-bottom: calc(10px + var(--safe-bottom));
-  }
-  #install-banner.show { display: flex; }
-  #install-banner button {
-    background: var(--white); color: var(--black); border: none;
-    border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
-  }
-</style>
+<title>카운터 & 오늘 할 일</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div id="app">
+
+  <!-- Top: tabs + mode toggles -->
   <div class="topbar">
-    <h1>문제 카운터</h1>
-    <button class="btn-add" onclick="openAdd()" aria-label="카운터 추가">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      추가
-    </button>
+    <div class="tabs">
+      <button class="tab-btn active" id="tabBtn-problems" onclick="switchTab('problems')">문제 카운터</button>
+      <button class="tab-btn" id="tabBtn-todo" onclick="switchTab('todo')">오늘 할 일</button>
+    </div>
+    <div class="topbar-actions">
+      <button class="ghost-btn" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <span>순서 변경</span>
+      </button>
+      <button class="ghost-btn icon-only" onclick="openMenu()" aria-label="더보기">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+      </button>
+    </div>
   </div>
 
-  <div id="list"></div>
+  <!-- ============ PROBLEMS TAB ============ -->
+  <div class="page" id="page-problems">
+    <div class="page-bar">
+      <span class="page-bar-title">문제 카운터</span>
+      <button class="btn-add" onclick="openProblemAdd()" aria-label="카운터 추가">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        추가
+      </button>
+    </div>
+    <div id="problemList" class="list"></div>
+  </div>
+
+  <!-- ============ TODO TAB ============ -->
+  <div class="page hidden" id="page-todo">
+    <div class="day-bar">
+      <button class="day-nav" id="dayPrevBtn" onclick="changeDay(-1)" aria-label="이전 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <div class="day-label-wrap">
+        <div class="day-label" id="dayLabel">오늘</div>
+        <div class="day-date" id="dayDate"></div>
+      </div>
+      <button class="day-nav" id="dayNextBtn" onclick="changeDay(1)" aria-label="다음 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button class="today-jump" id="todayJumpBtn" onclick="jumpToday()">오늘로</button>
+    </div>
+
+    <div class="score-card" id="scoreCard"></div>
+
+    <div class="page-bar">
+      <span class="page-bar-title">블록</span>
+      <div class="page-bar-actions">
+        <button class="btn-secondary" id="copyYesterdayBtn" onclick="copyYesterday()">어제 복사</button>
+        <button class="btn-add" onclick="openBlockAdd()" aria-label="블록 추가">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          추가
+        </button>
+      </div>
+    </div>
+    <div id="blockList" class="list"></div>
+  </div>
 
   <div id="install-banner">
     <span>홈 화면에 추가하면 앱처럼 사용할 수 있어요</span>
@@ -220,193 +83,130 @@
   </div>
 </div>
 
-<!-- Form Modal -->
-<div class="overlay" id="formOverlay" onclick="overlayClose(event, 'formOverlay')">
+<!-- ============ PROBLEM FORM SHEET ============ -->
+<div class="overlay" id="problemFormOverlay" onclick="overlayClose(event,'problemFormOverlay')">
   <div class="sheet">
     <div class="sheet-handle"></div>
-    <h2 id="sheetTitle">카운터 추가</h2>
+    <h2 id="problemSheetTitle">카운터 추가</h2>
     <div class="field">
       <label>제목</label>
-      <input type="text" id="fName" placeholder="예: 수학, 영어" maxlength="30" autocomplete="off">
+      <input type="text" id="pfName" placeholder="예: 수학, 영어" maxlength="30" autocomplete="off">
     </div>
     <div class="field">
       <label>총 문제 수</label>
-      <input type="number" id="fTotal" placeholder="예: 30" min="1" max="9999" inputmode="numeric">
+      <input type="number" id="pfTotal" placeholder="예: 30" min="1" max="9999" inputmode="numeric">
     </div>
     <div class="field">
       <label>푼 문제 수</label>
-      <input type="number" id="fSolved" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
+      <input type="number" id="pfSolved" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
     </div>
     <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeForm()">취소</button>
-      <button class="btn-save" onclick="submitForm()">저장</button>
+      <button class="btn-cancel" onclick="closeOverlay('problemFormOverlay')">취소</button>
+      <button class="btn-save" onclick="submitProblemForm()">저장</button>
     </div>
   </div>
 </div>
 
-<!-- Confirm Delete Modal -->
-<div class="overlay" id="confirmOverlay" onclick="overlayClose(event, 'confirmOverlay')">
+<!-- ============ BLOCK FORM SHEET ============ -->
+<div class="overlay" id="blockFormOverlay" onclick="overlayClose(event,'blockFormOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2 id="blockSheetTitle">블록 추가</h2>
+
+    <div class="field">
+      <label>제목</label>
+      <input type="text" id="bfName" placeholder="예: 아침 운동" maxlength="40" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>유형</label>
+      <div class="seg-group" id="bfTypeGroup">
+        <button class="seg-btn" data-val="schedule" onclick="selectSeg('bfTypeGroup',this)">일정</button>
+        <button class="seg-btn" data-val="once" onclick="selectSeg('bfTypeGroup',this)">일회성</button>
+        <button class="seg-btn" data-val="todo" onclick="selectSeg('bfTypeGroup',this)">할일</button>
+        <button class="seg-btn" data-val="leisure" onclick="selectSeg('bfTypeGroup',this)">여가</button>
+        <button class="seg-btn" data-val="routine" onclick="selectSeg('bfTypeGroup',this)">루틴</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>시간대</label>
+      <div class="seg-group" id="bfTimeGroup">
+        <button class="seg-btn" data-val="morning" onclick="selectSeg('bfTimeGroup',this)">오전</button>
+        <button class="seg-btn" data-val="afternoon" onclick="selectSeg('bfTimeGroup',this)">오후</button>
+        <button class="seg-btn" data-val="night" onclick="selectSeg('bfTimeGroup',this)">밤</button>
+        <button class="seg-btn" data-val="custom" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">시간 지정</button>
+      </div>
+      <input type="time" id="bfCustomTime" class="hidden" style="margin-top:8px;">
+    </div>
+
+    <div class="field">
+      <label>설명 (선택)</label>
+      <input type="text" id="bfDesc" placeholder="메모나 세부 내용" maxlength="100" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>진행 체크 방식</label>
+      <div class="seg-group" id="bfProgressGroup">
+        <button class="seg-btn" data-val="counter" onclick="selectSeg('bfProgressGroup',this); toggleCounterFields()">카운터</button>
+        <button class="seg-btn" data-val="toggle" onclick="selectSeg('bfProgressGroup',this); toggleCounterFields()">완료 토글</button>
+        <button class="seg-btn" data-val="none" onclick="selectSeg('bfProgressGroup',this); toggleCounterFields()">없음</button>
+      </div>
+    </div>
+
+    <div class="field hidden" id="bfCounterFields">
+      <label>목표 수</label>
+      <input type="number" id="bfTotal" placeholder="예: 5" min="1" max="9999" inputmode="numeric">
+      <label style="margin-top:10px;">현재 진행 수</label>
+      <input type="number" id="bfCurrent" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('blockFormOverlay')">취소</button>
+      <button class="btn-save" onclick="submitBlockForm()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CONFIRM DELETE SHEET (generic) ============ -->
+<div class="overlay" id="confirmOverlay" onclick="overlayClose(event,'confirmOverlay')">
   <div class="sheet confirm-sheet">
     <div class="sheet-handle"></div>
     <p id="confirmMsg"></p>
-    <button class="btn-delete" onclick="doDelete()">삭제</button>
-    <button class="btn-keep" onclick="closeConfirm()">취소</button>
+    <button class="btn-delete" id="confirmOkBtn">삭제</button>
+    <button class="btn-keep" onclick="closeOverlay('confirmOverlay')">취소</button>
   </div>
 </div>
 
-<script>
-let counters = JSON.parse(localStorage.getItem('pc_data') || '[]');
-let editId = null;
-let deleteId = null;
-let deferredPrompt = null;
+<!-- ============ MENU SHEET (backup / settings) ============ -->
+<div class="overlay" id="menuOverlay" onclick="overlayClose(event,'menuOverlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2>더보기</h2>
+    <button class="menu-item" onclick="exportBackup()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      전체 기록 백업 (내보내기)
+    </button>
+    <button class="menu-item" onclick="triggerImport()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      백업 불러오기 (가져오기)
+    </button>
+    <input type="file" id="importFile" accept="application/json" class="hidden" onchange="importBackup(event)">
+    <h2 style="margin-top:20px;">가중치 설정</h2>
+    <div class="weight-row"><span>일정</span><input type="number" id="wSchedule" min="0" max="100"></div>
+    <div class="weight-row"><span>할일</span><input type="number" id="wTodo" min="0" max="100"></div>
+    <div class="weight-row"><span>일회성</span><input type="number" id="wOnce" min="0" max="100"></div>
+    <div class="weight-row"><span>여가</span><input type="number" id="wLeisure" min="0" max="100"></div>
+    <div class="weight-row"><span>루틴</span><input type="number" id="wRoutine" min="0" max="100"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('menuOverlay')">닫기</button>
+      <button class="btn-save" onclick="saveWeights()">가중치 저장</button>
+    </div>
+  </div>
+</div>
 
-function save() { localStorage.setItem('pc_data', JSON.stringify(counters)); }
+<div id="toast"></div>
 
-function render() {
-  const el = document.getElementById('list');
-  if (!counters.length) {
-    el.innerHTML = `<div class="empty">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-        <rect x="3" y="3" width="18" height="18" rx="3"/>
-        <line x1="8" y1="12" x2="16" y2="12"/>
-        <line x1="12" y1="8" x2="12" y2="16"/>
-      </svg>
-      <p>추가 버튼을 눌러<br>첫 카운터를 만들어보세요</p>
-    </div>`;
-    return;
-  }
-  el.innerHTML = counters.map(c => {
-    const pct = c.total > 0 ? Math.round(c.solved / c.total * 100) : 0;
-    const w = Math.min(100, pct);
-    const atMin = c.solved <= 0;
-    const atMax = c.solved >= c.total;
-    return `<div class="card">
-      <div class="card-header">
-        <div class="card-title">${esc(c.name)}</div>
-        <div class="card-btns">
-          <button class="icon-btn" onclick="openEdit(${c.id})" aria-label="수정">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          <button class="icon-btn" onclick="askDelete(${c.id})" aria-label="삭제">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="card-body">
-        <div class="ctrl-row">
-          <button class="ctrl-btn" onclick="change(${c.id},-1)" ${atMin?'disabled':''} aria-label="감소">−</button>
-          <div class="fraction">${c.solved}<span>/${c.total}</span></div>
-          <button class="ctrl-btn" onclick="change(${c.id},1)" ${atMax?'disabled':''} aria-label="증가">+</button>
-        </div>
-        <div class="prog-wrap">
-          <div class="prog-bar"><div class="prog-fill" style="width:${w}%"></div></div>
-          <div class="prog-label">${pct}%</div>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function esc(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function change(id, d) {
-  const c = counters.find(x => x.id === id);
-  if (!c) return;
-  c.solved = Math.max(0, Math.min(c.total, c.solved + d));
-  save(); render();
-}
-
-function openAdd() {
-  editId = null;
-  document.getElementById('sheetTitle').textContent = '카운터 추가';
-  document.getElementById('fName').value = '';
-  document.getElementById('fTotal').value = '';
-  document.getElementById('fSolved').value = '0';
-  document.getElementById('formOverlay').classList.add('open');
-  setTimeout(() => document.getElementById('fName').focus(), 80);
-}
-
-function openEdit(id) {
-  const c = counters.find(x => x.id === id);
-  if (!c) return;
-  editId = id;
-  document.getElementById('sheetTitle').textContent = '카운터 수정';
-  document.getElementById('fName').value = c.name;
-  document.getElementById('fTotal').value = c.total;
-  document.getElementById('fSolved').value = c.solved;
-  document.getElementById('formOverlay').classList.add('open');
-  setTimeout(() => document.getElementById('fName').focus(), 80);
-}
-
-function closeForm() { document.getElementById('formOverlay').classList.remove('open'); }
-
-function submitForm() {
-  const name = document.getElementById('fName').value.trim();
-  const total = parseInt(document.getElementById('fTotal').value);
-  let solved = parseInt(document.getElementById('fSolved').value) || 0;
-  if (!name) { document.getElementById('fName').focus(); return; }
-  if (!total || total < 1) { document.getElementById('fTotal').focus(); return; }
-  solved = Math.max(0, Math.min(total, solved));
-  if (editId !== null) {
-    const c = counters.find(x => x.id === editId);
-    if (c) { c.name = name; c.total = total; c.solved = solved; }
-  } else {
-    counters.push({ id: Date.now(), name, total, solved });
-  }
-  save(); render(); closeForm();
-}
-
-function askDelete(id) {
-  const c = counters.find(x => x.id === id);
-  if (!c) return;
-  deleteId = id;
-  document.getElementById('confirmMsg').innerHTML = `<strong>${esc(c.name)}</strong> 카운터를 삭제할까요?<br>이 작업은 되돌릴 수 없어요.`;
-  document.getElementById('confirmOverlay').classList.add('open');
-}
-
-function doDelete() {
-  counters = counters.filter(x => x.id !== deleteId);
-  save(); render(); closeConfirm();
-}
-
-function closeConfirm() { document.getElementById('confirmOverlay').classList.remove('open'); }
-
-function overlayClose(e, id) {
-  if (e.target === document.getElementById(id)) {
-    document.getElementById(id).classList.remove('open');
-  }
-}
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeForm(); closeConfirm(); }
-  if (e.key === 'Enter' && document.getElementById('formOverlay').classList.contains('open')) submitForm();
-});
-
-// PWA Install
-window.addEventListener('beforeinstallprompt', e => {
-  e.preventDefault();
-  deferredPrompt = e;
-  if (!window.matchMedia('(display-mode: standalone)').matches) {
-    document.getElementById('install-banner').classList.add('show');
-  }
-});
-
-async function installApp() {
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt();
-  const { outcome } = await deferredPrompt.userChoice;
-  if (outcome === 'accepted') document.getElementById('install-banner').style.display = 'none';
-  deferredPrompt = null;
-}
-
-// Service worker
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
-}
-
-render();
-</script>
+<script src="app.js"></script>
 </body>
 </html>

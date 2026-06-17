@@ -1,5 +1,5 @@
-const CACHE = 'counter-v1';
-const ASSETS = ['./index.html', './manifest.json'];
+const CACHE = 'counter-v3';
+const ASSETS = ['./index.html', './manifest.json', './style.css', './app.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
