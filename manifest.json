@@ -1,7 +1,7 @@
 {
-  "name": "문제 카운터",
-  "short_name": "카운터",
-  "description": "과목별 문제 풀이 진행도를 기록하는 앱",
+  "name": "오늘 할 일 & 메모",
+  "short_name": "오늘 할 일",
+  "description": "하루 블록과 메모를 기록하는 앱",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#ffffff",

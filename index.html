@@ -7,21 +7,22 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="카운터">
+<meta name="apple-mobile-web-app-title" content="오늘 할 일">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<title>카운터 & 오늘 할 일</title>
+<title>오늘 할 일</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div id="app">
 
-  <!-- Top: tabs + mode toggles -->
   <div class="topbar">
     <div class="tabs">
-      <button class="tab-btn active" id="tabBtn-problems" onclick="switchTab('problems')">문제 카운터</button>
-      <button class="tab-btn" id="tabBtn-todo" onclick="switchTab('todo')">오늘 할 일</button>
+      <button class="tab-btn active" id="tabBtn-todo" onclick="switchTab('todo')">
+        <span id="todoTabTitle">오늘 할 일</span>
+      </button>
+      <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모장</button>
     </div>
     <div class="topbar-actions">
       <button class="ghost-btn" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false">
@@ -34,20 +35,7 @@
     </div>
   </div>
 
-  <!-- ============ PROBLEMS TAB ============ -->
-  <div class="page" id="page-problems">
-    <div class="page-bar">
-      <span class="page-bar-title">문제 카운터</span>
-      <button class="btn-add" onclick="openProblemAdd()" aria-label="카운터 추가">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        추가
-      </button>
-    </div>
-    <div id="problemList" class="list"></div>
-  </div>
-
-  <!-- ============ TODO TAB ============ -->
-  <div class="page hidden" id="page-todo">
+  <div class="page" id="page-todo">
     <div class="day-bar">
       <button class="day-nav" id="dayPrevBtn" onclick="changeDay(-1)" aria-label="이전 날">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -77,33 +65,33 @@
     <div id="blockList" class="list"></div>
   </div>
 
+  <!-- ============ MEMO PAGE ============ -->
+  <div class="page hidden" id="page-memo">
+    <div class="day-bar">
+      <button class="day-nav" id="memoDayPrevBtn" onclick="changeMemoDay(-1)" aria-label="이전 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <div class="day-label-wrap">
+        <div class="day-label" id="memoDayLabel">오늘</div>
+        <div class="day-date" id="memoDayDate"></div>
+      </div>
+      <button class="day-nav" id="memoDayNextBtn" onclick="changeMemoDay(1)" aria-label="다음 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button class="today-jump" id="memoTodayJumpBtn" onclick="jumpMemoToday()">오늘로</button>
+    </div>
+    <div id="memoList" class="memo-list"></div>
+    <div class="memo-input-bar">
+      <textarea id="memoInput" class="memo-input" placeholder="메모 입력..." rows="1" oninput="autoGrowMemoInput(this)" onkeydown="handleMemoKeydown(event)"></textarea>
+      <button class="memo-send-btn" onclick="sendMemo()" aria-label="전송">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>
+
   <div id="install-banner">
     <span>홈 화면에 추가하면 앱처럼 사용할 수 있어요</span>
     <button onclick="installApp()">설치</button>
-  </div>
-</div>
-
-<!-- ============ PROBLEM FORM SHEET ============ -->
-<div class="overlay" id="problemFormOverlay" onclick="overlayClose(event,'problemFormOverlay')">
-  <div class="sheet">
-    <div class="sheet-handle"></div>
-    <h2 id="problemSheetTitle">카운터 추가</h2>
-    <div class="field">
-      <label>제목</label>
-      <input type="text" id="pfName" placeholder="예: 수학, 영어" maxlength="30" autocomplete="off">
-    </div>
-    <div class="field">
-      <label>총 문제 수</label>
-      <input type="number" id="pfTotal" placeholder="예: 30" min="1" max="9999" inputmode="numeric">
-    </div>
-    <div class="field">
-      <label>푼 문제 수</label>
-      <input type="number" id="pfSolved" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
-    </div>
-    <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('problemFormOverlay')">취소</button>
-      <button class="btn-save" onclick="submitProblemForm()">저장</button>
-    </div>
   </div>
 </div>
 
@@ -130,7 +118,7 @@
     </div>
 
     <div class="field">
-      <label>시간대</label>
+      <label>시간대 (선택)</label>
       <div class="seg-group" id="bfTimeGroup">
         <button class="seg-btn" data-val="morning" onclick="selectSeg('bfTimeGroup',this)">오전</button>
         <button class="seg-btn" data-val="afternoon" onclick="selectSeg('bfTimeGroup',this)">오후</button>
@@ -161,9 +149,56 @@
       <input type="number" id="bfCurrent" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
     </div>
 
+    <div class="field" id="bfCarryoverField">
+      <label class="carryover-label">
+        <input type="checkbox" id="bfCarryover">
+        <span>이행 — 끝나기 전엔 매일 다음 날로 복사</span>
+      </label>
+      <p class="carryover-hint">완료되지 않은 채 하루가 지나면, 그날까지의 진행도를 그대로 들고 다음 날 목록에 다시 나타나요. 완료되면 더 이상 나타나지 않아요.</p>
+    </div>
+
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('blockFormOverlay')">취소</button>
       <button class="btn-save" onclick="submitBlockForm()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FOCUS TIMER SHEET ============ -->
+<div class="overlay" id="timerOverlay" onclick="overlayClose(event,'timerOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2 id="timerSheetTitle">집중 시간 재기</h2>
+
+    <div class="timer-display" id="timerDisplay">00:00:00</div>
+    <div class="timer-status" id="timerStatus">대기 중</div>
+
+    <div class="timer-controls">
+      <button class="timer-btn timer-btn-start" id="timerStartBtn" onclick="timerStart()">시작</button>
+      <button class="timer-btn timer-btn-pause hidden" id="timerPauseBtn" onclick="timerPause()">일시정지</button>
+      <button class="timer-btn timer-btn-resume hidden" id="timerResumeBtn" onclick="timerResume()">계속</button>
+      <button class="timer-btn timer-btn-stop hidden" id="timerStopBtn" onclick="timerStop()">기록 끝</button>
+    </div>
+
+    <div class="timer-manual-toggle" onclick="toggleManualEntry()">
+      <span id="manualToggleLabel">+ 직접 시작·종료 시간으로 추가</span>
+    </div>
+
+    <div class="field hidden" id="manualEntryFields">
+      <label>시작 시간</label>
+      <input type="time" id="manualStart">
+      <label style="margin-top:10px;">종료 시간</label>
+      <input type="time" id="manualEnd">
+      <button class="btn-secondary" style="width:100%;margin-top:10px;" onclick="addManualSession()">이 사이클 추가</button>
+    </div>
+
+    <div class="timer-session-list-wrap">
+      <label class="timer-session-label">완료된 사이클</label>
+      <div id="timerSessionList" class="timer-session-list"></div>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeTimerSheet()">닫기</button>
     </div>
   </div>
 </div>
@@ -192,20 +227,38 @@
       백업 불러오기 (가져오기)
     </button>
     <input type="file" id="importFile" accept="application/json" class="hidden" onchange="importBackup(event)">
-    <h2 style="margin-top:20px;">가중치 설정</h2>
+    <h2 style="margin-top:20px;">탭 이름</h2>
+    <div class="field">
+      <label>"오늘 할 일" 탭 제목</label>
+      <input type="text" id="todoTitleInput" placeholder="오늘 할 일" maxlength="20">
+    </div>
+    <h2 style="margin-top:8px;">가중치 설정</h2>
     <div class="weight-row"><span>일정</span><input type="number" id="wSchedule" min="0" max="100"></div>
     <div class="weight-row"><span>할일</span><input type="number" id="wTodo" min="0" max="100"></div>
     <div class="weight-row"><span>일회성</span><input type="number" id="wOnce" min="0" max="100"></div>
     <div class="weight-row"><span>여가</span><input type="number" id="wLeisure" min="0" max="100"></div>
     <div class="weight-row"><span>루틴</span><input type="number" id="wRoutine" min="0" max="100"></div>
+    <div class="weight-row"><span>집중시간</span><input type="number" id="wFocus" min="0" max="100"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('menuOverlay')">닫기</button>
-      <button class="btn-save" onclick="saveWeights()">가중치 저장</button>
+      <button class="btn-save" onclick="saveMenuSettings()">저장</button>
     </div>
   </div>
 </div>
 
 <div id="toast"></div>
+
+<!-- ============ YESTERDAY FEEDBACK SHEET ============ -->
+<div class="overlay" id="feedbackOverlay" onclick="overlayClose(event,'feedbackOverlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2>어제 피드백</h2>
+    <div id="feedbackBody" class="feedback-body">불러오는 중...</div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('feedbackOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>
