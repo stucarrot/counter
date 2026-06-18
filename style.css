@@ -1,5 +1,10 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
+button {
+  font-family: inherit; appearance: none; -webkit-appearance: none;
+  border: none; background: none; color: inherit; font-size: inherit;
+}
+
 :root {
   --black: #000;
   --white: #fff;
@@ -22,6 +27,12 @@
   --type-leisure-border: #f0b95e;
   --type-routine-bg: #e3d9fb;    /* vivid lavender */
   --type-routine-border: #b39ef0;
+  --type-watch-book-bg: #fbe0e0;     /* vivid rose */
+  --type-watch-book-border: #ea9d9d;
+  --type-watch-movie-bg: #d6ecf2;    /* vivid teal-blue */
+  --type-watch-movie-border: #82c0d4;
+  --type-watch-etc-bg: #ececec;      /* neutral gray */
+  --type-watch-etc-border: #bdbdbd;
 
   /* Heatmap intensity (uses routine lavender hue) */
   --hm-empty: #ececec;
@@ -49,17 +60,10 @@ html, body {
   border-bottom: 1px solid var(--gray-200);
   background: var(--white); flex-shrink: 0; gap: 8px;
 }
-.tabs { display: flex; gap: 4px; flex: 1; }
+.tabs { display: flex; gap: 2px; flex: 1; min-width: 0; }
 .tab-btn {
-  background: none; border: none; font-size: 14px; font-weight: 500;
-  color: var(--gray-400); padding: 10px 10px 12px; cursor: pointer;
-  border-bottom: 2px solid transparent; white-space: nowrap;
-}
-.tab-btn.active { color: var(--black); border-bottom-color: var(--black); font-weight: 600; }
-.tabs { display: flex; gap: 4px; flex: 1; min-width: 0; }
-.tab-btn {
-  background: none; border: none; font-size: 14px; font-weight: 500;
-  color: var(--gray-400); padding: 10px 10px 12px; cursor: pointer;
+  background: none; border: none; font-size: 13px; font-weight: 500;
+  color: var(--gray-400); padding: 9px 7px 11px; cursor: pointer;
   border-bottom: 2px solid transparent; white-space: nowrap;
 }
 .tab-btn.active { color: var(--black); border-bottom-color: var(--black); font-weight: 600; }
@@ -144,6 +148,28 @@ html, body {
 .block-card.type-todo { background: var(--type-todo-bg); border-color: var(--type-todo-border); }
 .block-card.type-leisure { background: var(--type-leisure-bg); border-color: var(--type-leisure-border); }
 .block-card.type-routine { background: var(--type-routine-bg); border-color: var(--type-routine-border); }
+.watch-card.type-watch-book { background: var(--type-watch-book-bg); border-color: var(--type-watch-book-border); }
+.watch-card.type-watch-movie { background: var(--type-watch-movie-bg); border-color: var(--type-watch-movie-border); }
+.watch-card.type-watch-etc { background: var(--type-watch-etc-bg); border-color: var(--type-watch-etc-border); }
+
+.watch-progress-btn {
+  border: 1px solid var(--black); background: var(--white); border-radius: 7px;
+  padding: 5px 10px; font-size: 14px; font-weight: 700; cursor: pointer; color: var(--black);
+  min-width: 48px; flex-shrink: 0;
+}
+.watch-progress-btn:active { background: var(--gray-100); }
+.watch-delta-chip { font-size: 11px; font-weight: 600; color: var(--gray-600); flex-shrink: 0; }
+
+.game-points-card {
+  margin: 24px 16px; border: 1px solid var(--black); border-radius: 14px;
+  padding: 32px 20px; text-align: center;
+}
+.game-points-label { font-size: 13px; color: var(--gray-600); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+.game-points-num { font-size: 48px; font-weight: 800; letter-spacing: -1px; }
+.game-points-hint { font-size: 12px; color: var(--gray-400); margin-top: 10px; }
+
+.watch-memo-list { max-height: 260px; }
+.watch-memo-input-bar { border-top: 1px solid var(--gray-200); padding: 10px 0; margin-top: 10px; }
 
 .type-chip { display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,0.08); margin-right: 6px; letter-spacing: .2px; }
 .time-chip { font-size: 11px; color: var(--gray-600); font-weight: 500; }
@@ -161,8 +187,10 @@ html, body {
 .block-progress-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 
 .toggle-check {
-  width: 26px; height: 26px; border: 1.5px solid var(--black); border-radius: 7px; background: var(--white);
-  cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 26px; height: 26px; min-width: 26px; max-width: 26px;
+  border: 1.5px solid var(--black); border-radius: 7px; background: var(--white);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 26px; padding: 0; box-sizing: border-box; line-height: 0;
 }
 .toggle-check.done { background: var(--black); }
 .toggle-check svg { width: 15px; height: 15px; opacity: 0; stroke: var(--white); }
@@ -232,8 +260,11 @@ html, body {
 .memo-send-btn svg { width: 17px; height: 17px; }
 
 /* ===== Score feedback button ===== */
-.score-feedback-btn { font-size: 11.5px; font-weight: 600; color: var(--black); background: none; border: 1px solid var(--gray-300); border-radius: 7px; padding: 5px 10px; cursor: pointer; margin-top: 10px; }
+.score-feedback-btn { font-size: 10px; font-weight: 600; color: var(--black); background: none; border: 1px solid var(--gray-300); border-radius: 6px; padding: 3px 7px; cursor: pointer; }
 .score-feedback-btn:active { background: var(--gray-100); }
+.score-bottom-row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.score-focus-row { font-size: 10.5px; color: var(--gray-600); font-weight: 500; }
+.score-focus-row strong { color: var(--black); }
 .feedback-body { font-size: 14px; line-height: 1.6; color: var(--black); white-space: pre-wrap; }
 .feedback-body .fb-loading { color: var(--gray-400); }
 
@@ -264,13 +295,13 @@ body.reordering .move-btns { display: flex; }
 .today-jump.hidden { visibility: hidden; }
 
 /* ===== Score card ===== */
-.score-card { margin: 6px 16px 0; border: 1px solid var(--black); border-radius: 12px; padding: 14px 16px; }
-.score-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-.score-num { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
-.score-num span { font-size: 14px; font-weight: 500; color: var(--gray-600); }
-.score-feedback { font-size: 13px; color: var(--gray-600); line-height: 1.4; }
-.score-bar { height: 6px; background: var(--gray-200); border-radius: 3px; overflow: hidden; margin-top: 10px; }
-.score-bar-fill { height: 100%; background: var(--black); border-radius: 3px; transition: width .3s ease; }
+.score-card { margin: 6px 16px 0; border: 1px solid var(--black); border-radius: 9px; padding: 8px 11px; }
+.score-top { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
+.score-num { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+.score-num span { font-size: 10px; font-weight: 500; color: var(--gray-600); }
+.score-feedback { font-size: 10.5px; color: var(--gray-600); line-height: 1.25; }
+.score-bar { height: 3px; background: var(--gray-200); border-radius: 2px; overflow: hidden; margin-top: 5px; }
+.score-bar-fill { height: 100%; background: var(--black); border-radius: 2px; transition: width .3s ease; }
 
 /* ===== Overlay / sheet ===== */
 .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100; align-items: flex-end; justify-content: center; }
@@ -283,12 +314,21 @@ body.reordering .move-btns { display: flex; }
 
 .field { margin-bottom: 14px; }
 .field label { font-size: 11.5px; color: var(--gray-600); display: block; margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
-.field input {
+.field input:not([type="checkbox"]) {
   width: 100%; border: 1px solid var(--black); border-radius: 8px; padding: 11px 13px;
   font-size: 16px; color: var(--black); background: var(--white); -webkit-appearance: none; appearance: none;
 }
-.field input:focus { outline: 2px solid var(--black); outline-offset: -1px; }
+.field input:not([type="checkbox"]):focus { outline: 2px solid var(--black); outline-offset: -1px; }
 .hidden { display: none !important; }
+
+.carryover-label {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  text-transform: none; font-size: 14.5px; font-weight: 500; color: var(--black);
+}
+.carryover-label input[type="checkbox"] {
+  width: 19px; height: 19px; flex-shrink: 0; margin: 0; cursor: pointer;
+  accent-color: var(--black);
+}
 
 .seg-group { display: flex; gap: 6px; flex-wrap: wrap; }
 .seg-btn { flex: 1; min-width: 64px; border: 1px solid var(--black); background: var(--white); border-radius: 8px; padding: 9px 6px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--black); }

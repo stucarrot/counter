@@ -19,10 +19,10 @@
 
   <div class="topbar">
     <div class="tabs">
-      <button class="tab-btn active" id="tabBtn-todo" onclick="switchTab('todo')">
-        <span id="todoTabTitle">오늘 할 일</span>
-      </button>
-      <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모장</button>
+      <button class="tab-btn active" id="tabBtn-todo" onclick="switchTab('todo')">할일</button>
+      <button class="tab-btn" id="tabBtn-watch" onclick="switchTab('watch')">감상</button>
+      <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모</button>
+      <button class="tab-btn" id="tabBtn-game" onclick="switchTab('game')">게임</button>
     </div>
     <div class="topbar-actions">
       <button class="ghost-btn" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false">
@@ -65,6 +65,34 @@
     <div id="blockList" class="list"></div>
   </div>
 
+  <!-- ============ WATCH (감상) PAGE ============ -->
+  <div class="page hidden" id="page-watch">
+    <div class="day-bar">
+      <button class="day-nav" id="watchDayPrevBtn" onclick="changeWatchDay(-1)" aria-label="이전 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <div class="day-label-wrap">
+        <div class="day-label" id="watchDayLabel">오늘</div>
+        <div class="day-date" id="watchDayDate"></div>
+      </div>
+      <button class="day-nav" id="watchDayNextBtn" onclick="changeWatchDay(1)" aria-label="다음 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button class="today-jump" id="watchTodayJumpBtn" onclick="jumpWatchToday()">오늘로</button>
+    </div>
+
+    <div class="page-bar">
+      <span class="page-bar-title">감상</span>
+      <div class="page-bar-actions">
+        <button class="btn-add" onclick="openWatchAdd()" aria-label="감상 추가">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          추가
+        </button>
+      </div>
+    </div>
+    <div id="watchList" class="list"></div>
+  </div>
+
   <!-- ============ MEMO PAGE ============ -->
   <div class="page hidden" id="page-memo">
     <div class="day-bar">
@@ -86,6 +114,15 @@
       <button class="memo-send-btn" onclick="sendMemo()" aria-label="전송">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
+    </div>
+  </div>
+
+  <!-- ============ GAME PAGE ============ -->
+  <div class="page hidden" id="page-game">
+    <div class="game-points-card">
+      <div class="game-points-label">누적 포인트</div>
+      <div class="game-points-num" id="gamePointsNum">0</div>
+      <div class="game-points-hint">매일의 종합 점수가 합산돼요</div>
     </div>
   </div>
 
@@ -118,11 +155,12 @@
     </div>
 
     <div class="field">
-      <label>시간대 (선택)</label>
+      <label>시간대</label>
       <div class="seg-group" id="bfTimeGroup">
-        <button class="seg-btn" data-val="morning" onclick="selectSeg('bfTimeGroup',this)">오전</button>
-        <button class="seg-btn" data-val="afternoon" onclick="selectSeg('bfTimeGroup',this)">오후</button>
-        <button class="seg-btn" data-val="night" onclick="selectSeg('bfTimeGroup',this)">밤</button>
+        <button class="seg-btn" data-val="none" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">미지정</button>
+        <button class="seg-btn" data-val="morning" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">오전</button>
+        <button class="seg-btn" data-val="afternoon" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">오후</button>
+        <button class="seg-btn" data-val="night" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">밤</button>
         <button class="seg-btn" data-val="custom" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">시간 지정</button>
       </div>
       <input type="time" id="bfCustomTime" class="hidden" style="margin-top:8px;">
@@ -152,9 +190,8 @@
     <div class="field" id="bfCarryoverField">
       <label class="carryover-label">
         <input type="checkbox" id="bfCarryover">
-        <span>이행 — 끝나기 전엔 매일 다음 날로 복사</span>
+        <span>이행</span>
       </label>
-      <p class="carryover-hint">완료되지 않은 채 하루가 지나면, 그날까지의 진행도를 그대로 들고 다음 날 목록에 다시 나타나요. 완료되면 더 이상 나타나지 않아요.</p>
     </div>
 
     <div class="sheet-actions">
@@ -203,6 +240,84 @@
   </div>
 </div>
 
+<!-- ============ WATCH FORM SHEET ============ -->
+<div class="overlay" id="watchFormOverlay" onclick="overlayClose(event,'watchFormOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2 id="watchSheetTitle">감상 추가</h2>
+
+    <div class="field">
+      <label>제목</label>
+      <input type="text" id="wfName" placeholder="예: 듄 파트2" maxlength="60" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>저자 (선택)</label>
+      <input type="text" id="wfAuthor" placeholder="예: 드니 빌뇌브" maxlength="40" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>유형</label>
+      <div class="seg-group" id="wfTypeGroup">
+        <button class="seg-btn" data-val="book" onclick="selectSeg('wfTypeGroup',this)">독서</button>
+        <button class="seg-btn" data-val="movie" onclick="selectSeg('wfTypeGroup',this)">영화</button>
+        <button class="seg-btn" data-val="etc" onclick="selectSeg('wfTypeGroup',this)">기타</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>진행도 (%)</label>
+      <input type="number" id="wfProgress" placeholder="예: 0" min="0" max="100" inputmode="numeric">
+    </div>
+
+    <div class="field" id="wfArchiveField">
+      <label class="carryover-label">
+        <input type="checkbox" id="wfArchive">
+        <span>보관</span>
+      </label>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('watchFormOverlay')">취소</button>
+      <button class="btn-save" onclick="submitWatchForm()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ WATCH PROGRESS EDIT POPUP ============ -->
+<div class="overlay" id="watchProgressOverlay" onclick="overlayClose(event,'watchProgressOverlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2 id="watchProgressTitle">진행도 수정</h2>
+    <div class="field">
+      <label>진행도 (%)</label>
+      <input type="number" id="wpProgressInput" min="0" max="100" inputmode="numeric">
+    </div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('watchProgressOverlay')">취소</button>
+      <button class="btn-save" onclick="submitWatchProgress()">적용</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ WATCH MEMO SHEET ============ -->
+<div class="overlay" id="watchMemoOverlay" onclick="overlayClose(event,'watchMemoOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2 id="watchMemoTitle">감상 메모</h2>
+    <div id="watchMemoList" class="memo-list watch-memo-list"></div>
+    <div class="memo-input-bar watch-memo-input-bar">
+      <textarea id="watchMemoInput" class="memo-input" placeholder="감상 메모 입력..." rows="1" oninput="autoGrowMemoInput(this)" onkeydown="handleWatchMemoKeydown(event)"></textarea>
+      <button class="memo-send-btn" onclick="sendWatchMemo()" aria-label="전송">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('watchMemoOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ CONFIRM DELETE SHEET (generic) ============ -->
 <div class="overlay" id="confirmOverlay" onclick="overlayClose(event,'confirmOverlay')">
   <div class="sheet confirm-sheet">
@@ -227,18 +342,14 @@
       백업 불러오기 (가져오기)
     </button>
     <input type="file" id="importFile" accept="application/json" class="hidden" onchange="importBackup(event)">
-    <h2 style="margin-top:20px;">탭 이름</h2>
-    <div class="field">
-      <label>"오늘 할 일" 탭 제목</label>
-      <input type="text" id="todoTitleInput" placeholder="오늘 할 일" maxlength="20">
-    </div>
-    <h2 style="margin-top:8px;">가중치 설정</h2>
+    <h2 style="margin-top:20px;">가중치 설정</h2>
     <div class="weight-row"><span>일정</span><input type="number" id="wSchedule" min="0" max="100"></div>
     <div class="weight-row"><span>할일</span><input type="number" id="wTodo" min="0" max="100"></div>
     <div class="weight-row"><span>일회성</span><input type="number" id="wOnce" min="0" max="100"></div>
     <div class="weight-row"><span>여가</span><input type="number" id="wLeisure" min="0" max="100"></div>
     <div class="weight-row"><span>루틴</span><input type="number" id="wRoutine" min="0" max="100"></div>
     <div class="weight-row"><span>집중시간</span><input type="number" id="wFocus" min="0" max="100"></div>
+    <div class="weight-row"><span>감상</span><input type="number" id="wWatch" min="0" max="100"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('menuOverlay')">닫기</button>
       <button class="btn-save" onclick="saveMenuSettings()">저장</button>
