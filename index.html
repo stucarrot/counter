@@ -19,20 +19,41 @@
 
   <div class="topbar">
     <div class="tabs">
+      <button class="tab-btn" id="tabBtn-plan" onclick="switchTab('plan')">계획</button>
       <button class="tab-btn active" id="tabBtn-todo" onclick="switchTab('todo')">할일</button>
       <button class="tab-btn" id="tabBtn-watch" onclick="switchTab('watch')">감상</button>
       <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모</button>
       <button class="tab-btn" id="tabBtn-game" onclick="switchTab('game')">게임</button>
     </div>
     <div class="topbar-actions">
-      <button class="ghost-btn" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false">
+      <button class="ghost-btn icon-only" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false" aria-label="순서 변경">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        <span>순서 변경</span>
       </button>
       <button class="ghost-btn icon-only" onclick="openMenu()" aria-label="더보기">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
       </button>
     </div>
+  </div>
+
+  <!-- ============ PLAN PAGE ============ -->
+  <div class="page hidden" id="page-plan">
+    <div class="subtabs">
+      <button class="subtab-btn active" id="planSubtab-time" onclick="switchPlanSubtab('time')">시간순</button>
+      <button class="subtab-btn" id="planSubtab-unspecified" onclick="switchPlanSubtab('unspecified')">시간미지정</button>
+      <button class="subtab-btn" id="planSubtab-period" onclick="switchPlanSubtab('period')">기간계획</button>
+    </div>
+
+    <div class="page-bar">
+      <span class="page-bar-title">계획</span>
+      <div class="page-bar-actions">
+        <button class="btn-secondary hidden" id="periodAddBtn" onclick="openPeriodPlanAdd()">+ 기간계획</button>
+        <button class="btn-add" id="planAddBtn" onclick="openPlanAdd()" aria-label="계획 추가">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          추가
+        </button>
+      </div>
+    </div>
+    <div id="planList" class="list"></div>
   </div>
 
   <div class="page" id="page-todo">
@@ -123,6 +144,7 @@
       <div class="game-points-label">누적 포인트</div>
       <div class="game-points-num" id="gamePointsNum">0</div>
       <div class="game-points-hint">매일의 종합 점수가 합산돼요</div>
+      <button class="btn-secondary game-recalc-btn" onclick="recalcGamePoints()">현재 기록으로 다시 계산</button>
     </div>
   </div>
 
@@ -318,6 +340,163 @@
   </div>
 </div>
 
+<!-- ============ PLAN FORM SHEET ============ -->
+<div class="overlay" id="planFormOverlay" onclick="overlayClose(event,'planFormOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2 id="planSheetTitle">계획 추가</h2>
+
+    <div class="field">
+      <label>제목</label>
+      <input type="text" id="pfName" placeholder="예: 발표 자료 준비" maxlength="40" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>유형</label>
+      <div class="seg-group" id="pfTypeGroup">
+        <button class="seg-btn" data-val="unspecified" onclick="selectSeg('pfTypeGroup',this)">미지정</button>
+        <button class="seg-btn" data-val="schedule" onclick="selectSeg('pfTypeGroup',this)">일정</button>
+        <button class="seg-btn" data-val="once" onclick="selectSeg('pfTypeGroup',this)">일회성</button>
+        <button class="seg-btn" data-val="todo" onclick="selectSeg('pfTypeGroup',this)">할일</button>
+        <button class="seg-btn" data-val="leisure" onclick="selectSeg('pfTypeGroup',this)">여가</button>
+        <button class="seg-btn" data-val="routine" onclick="selectSeg('pfTypeGroup',this)">루틴</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>시간</label>
+      <div class="seg-group" id="pfTimeModeGroup">
+        <button class="seg-btn" data-val="unspecified" onclick="selectSeg('pfTimeModeGroup',this); onPlanTimeModeChanged()">시간미지정</button>
+        <button class="seg-btn" data-val="specified" onclick="selectSeg('pfTimeModeGroup',this); onPlanTimeModeChanged()">시간 지정</button>
+      </div>
+      <div class="hidden" id="pfTimeFields" style="margin-top:10px;">
+        <label>날짜 (범위 지정 가능)</label>
+        <div class="range-row">
+          <input type="date" id="pfDateStart">
+          <span class="range-sep">~</span>
+          <input type="date" id="pfDateEnd">
+        </div>
+        <label style="margin-top:10px;">시간 (선택, 범위 지정 가능)</label>
+        <div class="range-row">
+          <input type="time" id="pfTimeStart">
+          <span class="range-sep">~</span>
+          <input type="time" id="pfTimeEnd">
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>설명 (선택)</label>
+      <input type="text" id="pfDesc" placeholder="메모나 세부 내용" maxlength="100" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>진행 체크 방식</label>
+      <div class="seg-group" id="pfProgressGroup">
+        <button class="seg-btn" data-val="counter" onclick="selectSeg('pfProgressGroup',this); togglePlanCounterFields()">카운터</button>
+        <button class="seg-btn" data-val="toggle" onclick="selectSeg('pfProgressGroup',this); togglePlanCounterFields()">완료 토글</button>
+        <button class="seg-btn" data-val="none" onclick="selectSeg('pfProgressGroup',this); togglePlanCounterFields()">없음</button>
+      </div>
+    </div>
+
+    <div class="field hidden" id="pfCounterFields">
+      <label>목표 수</label>
+      <input type="number" id="pfTotal" placeholder="예: 5" min="1" max="9999" inputmode="numeric">
+      <label style="margin-top:10px;">현재 진행 수</label>
+      <input type="number" id="pfCurrent" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('planFormOverlay')">취소</button>
+      <button class="btn-save" onclick="submitPlanForm()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PERIOD PLAN FORM SHEET ============ -->
+<div class="overlay" id="periodFormOverlay" onclick="overlayClose(event,'periodFormOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2 id="periodSheetTitle">기간계획 추가</h2>
+
+    <div class="field">
+      <label>기간 종류</label>
+      <div class="seg-group" id="ppModeGroup">
+        <button class="seg-btn" data-val="month" onclick="selectSeg('ppModeGroup',this); onPeriodModeChanged()">월</button>
+        <button class="seg-btn" data-val="week" onclick="selectSeg('ppModeGroup',this); onPeriodModeChanged()">주</button>
+        <button class="seg-btn" data-val="range" onclick="selectSeg('ppModeGroup',this); onPeriodModeChanged()">날짜범위</button>
+      </div>
+    </div>
+
+    <div class="field hidden" id="ppMonthField">
+      <label>월 선택</label>
+      <input type="month" id="ppMonthInput">
+    </div>
+    <div class="field hidden" id="ppWeekField">
+      <label>주 선택</label>
+      <input type="week" id="ppWeekInput">
+    </div>
+    <div class="field hidden" id="ppRangeField">
+      <label>날짜 범위</label>
+      <div class="range-row">
+        <input type="date" id="ppRangeStart">
+        <span class="range-sep">~</span>
+        <input type="date" id="ppRangeEnd">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>설명 (선택)</label>
+      <input type="text" id="ppDesc" placeholder="이 기간의 목표나 메모" maxlength="200" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>참조한 블록</label>
+      <div id="ppRefList" class="ref-list"></div>
+      <button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="openRefPicker()">+ 블록 참조 추가</button>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('periodFormOverlay')">취소</button>
+      <button class="btn-save" onclick="submitPeriodForm()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ REFERENCE PICKER SHEET ============ -->
+<div class="overlay" id="refPickerOverlay" onclick="overlayClose(event,'refPickerOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2>블록 참조 선택</h2>
+    <div id="refPickerList" class="ref-picker-list"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('refPickerOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ IMPORT TO TODO POPUP ============ -->
+<div class="overlay" id="importPopupOverlay" onclick="overlayClose(event,'importPopupOverlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2>할일로 보내기</h2>
+    <div class="sheet-actions" style="flex-direction:column;gap:8px;margin-top:4px;">
+      <button class="btn-secondary" style="width:100%;" onclick="sendPlanToDate('today')">오늘로</button>
+      <button class="btn-secondary" style="width:100%;" onclick="sendPlanToDate('tomorrow')">내일로</button>
+    </div>
+    <div class="field" style="margin-top:14px;">
+      <label>날짜 지정</label>
+      <div class="range-row">
+        <input type="date" id="importDateInput">
+        <button class="btn-save" style="flex:0 0 auto;padding:11px 16px;" onclick="sendPlanToDate('custom')">보내기</button>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('importPopupOverlay')">취소</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ CONFIRM DELETE SHEET (generic) ============ -->
 <div class="overlay" id="confirmOverlay" onclick="overlayClose(event,'confirmOverlay')">
   <div class="sheet confirm-sheet">
@@ -350,6 +529,7 @@
     <div class="weight-row"><span>루틴</span><input type="number" id="wRoutine" min="0" max="100"></div>
     <div class="weight-row"><span>집중시간</span><input type="number" id="wFocus" min="0" max="100"></div>
     <div class="weight-row"><span>감상</span><input type="number" id="wWatch" min="0" max="100"></div>
+    <div class="weight-row"><span>미지정</span><input type="number" id="wUnspecified" min="0" max="100"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('menuOverlay')">닫기</button>
       <button class="btn-save" onclick="saveMenuSettings()">저장</button>

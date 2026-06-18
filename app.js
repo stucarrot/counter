@@ -10,8 +10,20 @@
    pc_watch_chain_meta: { <watchChainId>: { stopped: bool } }  // 감상 이월 체인
    pc_memos       : { "2026-06-17": [{id, text, time}], ... }  // 메모 탭
    pc_active_timer: { dateKey, blockId, startedAt(ISOString), accumulatedMs, paused: bool } | null
+   pc_plan_blocks : [ planBlock, ... ]   // 계획 탭 — 날짜에 속하지 않는 전역 목록
+     planBlock: { id, name, desc, type, progressType, total?, current?, done?,
+       timeUnspecified: bool, dateStart?, dateEnd?, timeStart?, timeEnd?, order }
+   pc_period_plans: [ periodPlan, ... ]  // 기간계획 블록
+     periodPlan: { id, mode(month/week/range), dateStart, dateEnd, desc,
+       refs: [{ kind: 'plan'|'todo', id, dateKey? }], order }
+     (todo 참조는 특정 날짜의 할일 블록이라 dateKey가 필요하고, plan 참조는 전역
+      목록이라 dateKey가 필요 없다.)
    pc_game_points : number  // 게임 탭 누적 포인트 (매일 종합점수 단순 합산)
-   pc_game_last_added_key: string  // 마지막으로 포인트에 합산된 날짜 (중복 합산 방지)
+   pc_game_added_scores: { "2026-06-16": 59, ... }  // 날짜별로 포인트에 "이미 합산한 점수"
+     기록. 과거 날짜의 할일/감상 데이터를 수정해서 그날 점수가 바뀌면, 여기 기록된
+     값과 새로 계산한 값의 차이만큼 gamePoints를 보정하고 이 기록도 갱신한다.
+     (오늘 날짜는 아직 "마감"되지 않았으므로 여기 기록되지 않고, 오전 4시 컷오프를
+     지나야 비로소 합산 대상이 된다.)
 
    유형 "루틴"은 carryover가 항상 true로 강제된다 (매일 자동 반복, 진행도 리셋).
    다른 유형은 "이행" 체크박스로 carryover를 켤 수 있다 — 완료 전까지 진행도를
@@ -35,7 +47,9 @@ let watchChainMeta = JSON.parse(localStorage.getItem('pc_watch_chain_meta') || '
 let memos = JSON.parse(localStorage.getItem('pc_memos') || '{}');
 let activeTimer = JSON.parse(localStorage.getItem('pc_active_timer') || 'null');
 let gamePoints = parseFloat(localStorage.getItem('pc_game_points') || '0');
-let gameLastAddedKey = localStorage.getItem('pc_game_last_added_key') || null;
+let gameAddedScores = JSON.parse(localStorage.getItem('pc_game_added_scores') || '{}');
+let planBlocks = JSON.parse(localStorage.getItem('pc_plan_blocks') || '[]');
+let periodPlans = JSON.parse(localStorage.getItem('pc_period_plans') || '[]');
 
 let editBlockId = null;
 let deleteBlockId = null;
@@ -50,6 +64,14 @@ let editWatchId = null;
 let progressEditWatchId = null;
 let watchMemoTargetId = null;
 let selectedWatchType = null;
+let editPlanId = null;
+let deletePlanId = null;
+let selectedPlanType = null, selectedPlanTimeMode = null, selectedPlanProgress = null;
+let currentPlanSubtab = 'time';
+let editPeriodId = null;
+let selectedPeriodMode = null;
+let pendingPeriodRefs = []; // 기간계획 폼 작성 중 임시로 들고 있는 참조 목록
+let importPlanId = null;
 
 function appNow() {
   // 오전 4시를 하루의 시작으로 보는 "가상 현재 시각"
@@ -61,23 +83,29 @@ let viewingDateKey = TODAY_KEY();
 viewingMemoDateKey = TODAY_KEY();
 viewingWatchDateKey = TODAY_KEY();
 
-const TYPE_LABEL = { schedule: '일정', once: '일회성', todo: '할일', leisure: '여가', routine: '루틴' };
+const TYPE_LABEL = { schedule: '일정', once: '일회성', todo: '할일', leisure: '여가', routine: '루틴', unspecified: '미지정' };
 const TIME_LABEL = { morning: '오전', afternoon: '오후', night: '밤' };
 const WATCH_TYPE_LABEL = { book: '독서', movie: '영화', etc: '기타' };
 
 /* ---------- persistence helpers ---------- */
-function saveDays() { localStorage.setItem('pc_days', JSON.stringify(days)); }
+function saveDays() {
+  localStorage.setItem('pc_days', JSON.stringify(days));
+  reconcileGamePoints();
+  if (currentTab === 'game') renderGamePoints();
+}
 function saveWeightsToStorage() { localStorage.setItem('pc_weights', JSON.stringify(weights)); }
 function saveCarryoverMeta() { localStorage.setItem('pc_carryover_meta', JSON.stringify(carryoverMeta)); }
 function saveWatchChainMeta() { localStorage.setItem('pc_watch_chain_meta', JSON.stringify(watchChainMeta)); }
 function saveMemos() { localStorage.setItem('pc_memos', JSON.stringify(memos)); }
+function savePlanBlocks() { localStorage.setItem('pc_plan_blocks', JSON.stringify(planBlocks)); }
+function savePeriodPlans() { localStorage.setItem('pc_period_plans', JSON.stringify(periodPlans)); }
 function saveActiveTimer() {
   if (activeTimer) localStorage.setItem('pc_active_timer', JSON.stringify(activeTimer));
   else localStorage.removeItem('pc_active_timer');
 }
 function saveGamePoints() {
   localStorage.setItem('pc_game_points', String(gamePoints));
-  localStorage.setItem('pc_game_last_added_key', gameLastAddedKey || '');
+  localStorage.setItem('pc_game_added_scores', JSON.stringify(gameAddedScores));
 }
 
 function formatKey(d) {
@@ -114,12 +142,12 @@ function showToast(msg) {
    ========================================================= */
 function switchTab(tab) {
   currentTab = tab;
-  ['todo','watch','memo','game'].forEach(t => {
+  ['plan','todo','watch','memo','game'].forEach(t => {
     document.getElementById(`tabBtn-${t}`).classList.toggle('active', tab === t);
     document.getElementById(`page-${t}`).classList.toggle('hidden', tab !== t);
   });
-  document.getElementById('reorderToggle').style.display = (tab === 'todo' || tab === 'watch') ? '' : 'none';
-  if (reordering && tab !== 'todo' && tab !== 'watch') toggleReorder();
+  document.getElementById('reorderToggle').style.display = (tab === 'todo' || tab === 'watch' || tab === 'plan') ? '' : 'none';
+  if (reordering && tab !== 'todo' && tab !== 'watch' && tab !== 'plan') toggleReorder();
   if (tab === 'memo') {
     renderMemoHeader();
     renderMemos();
@@ -128,6 +156,8 @@ function switchTab(tab) {
     renderWatchBlocks();
   } else if (tab === 'game') {
     renderGamePoints();
+  } else if (tab === 'plan') {
+    renderPlanList();
   }
 }
 
@@ -139,6 +169,7 @@ function toggleReorder() {
   document.body.classList.toggle('reordering', reordering);
   document.getElementById('reorderToggle').setAttribute('aria-pressed', reordering ? 'true' : 'false');
   if (currentTab === 'watch') renderWatchBlocks();
+  else if (currentTab === 'plan') renderPlanList();
   else renderBlocks();
 }
 
@@ -150,7 +181,7 @@ function overlayClose(e, id) { if (e.target === document.getElementById(id)) clo
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay'].forEach(closeOverlay);
+    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay'].forEach(closeOverlay);
   }
 });
 
@@ -197,6 +228,10 @@ function selectSeg(groupId, btn) {
   if (groupId === 'bfTimeGroup') selectedTime = btn.dataset.val;
   if (groupId === 'bfProgressGroup') selectedProgress = btn.dataset.val;
   if (groupId === 'wfTypeGroup') selectedWatchType = btn.dataset.val;
+  if (groupId === 'pfTypeGroup') selectedPlanType = btn.dataset.val;
+  if (groupId === 'pfTimeModeGroup') selectedPlanTimeMode = btn.dataset.val;
+  if (groupId === 'pfProgressGroup') selectedPlanProgress = btn.dataset.val;
+  if (groupId === 'ppModeGroup') selectedPeriodMode = btn.dataset.val;
 }
 
 function onTypeChanged() {
@@ -574,6 +609,7 @@ function renderBlocks() {
         <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changeBlockCounter(${b.id},-1)" ${atMin?'disabled':''} aria-label="감소">−</button>
         <div class="fraction" style="font-size:18px;min-width:54px;">${b.current}<span style="font-size:13px;">/${b.total}</span></div>
         <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changeBlockCounter(${b.id},1)" ${atMax?'disabled':''} aria-label="증가">+</button>
+        <span class="counter-pct">${pct}%</span>
         <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div></div>
       </div>`;
     } else if (b.progressType === 'toggle') {
@@ -935,6 +971,581 @@ function deleteSession(idx) {
   renderTimerSheet();
   renderBlocks();
   renderScore();
+}
+
+/* =========================================================
+   PLAN PAGE
+   ========================================================= */
+function switchPlanSubtab(sub) {
+  currentPlanSubtab = sub;
+  ['time','unspecified','period'].forEach(s => {
+    document.getElementById(`planSubtab-${s}`).classList.toggle('active', sub === s);
+  });
+  document.getElementById('periodAddBtn').classList.toggle('hidden', sub !== 'period');
+  document.getElementById('planAddBtn').classList.toggle('hidden', sub === 'period');
+  if (reordering) toggleReorder(); // 서브탭을 바꾸면 순서모드는 헷갈리니 끈다
+  renderPlanList();
+}
+
+function onPlanTimeModeChanged() {
+  document.getElementById('pfTimeFields').classList.toggle('hidden', selectedPlanTimeMode !== 'specified');
+}
+
+function togglePlanCounterFields() {
+  document.getElementById('pfCounterFields').classList.toggle('hidden', selectedPlanProgress !== 'counter');
+}
+
+function openPlanAdd() {
+  editPlanId = null;
+  document.getElementById('planSheetTitle').textContent = '계획 추가';
+  document.getElementById('pfName').value = '';
+  document.getElementById('pfDesc').value = '';
+  document.getElementById('pfTotal').value = '';
+  document.getElementById('pfCurrent').value = '0';
+  document.getElementById('pfDateStart').value = '';
+  document.getElementById('pfDateEnd').value = '';
+  document.getElementById('pfTimeStart').value = '';
+  document.getElementById('pfTimeEnd').value = '';
+  document.getElementById('pfCounterFields').classList.add('hidden');
+  document.getElementById('pfTimeFields').classList.add('hidden');
+  selectedPlanType = null; selectedPlanTimeMode = 'unspecified'; selectedPlanProgress = null;
+  document.querySelectorAll('#pfTypeGroup .seg-btn, #pfTimeModeGroup .seg-btn, #pfProgressGroup .seg-btn').forEach(b => b.classList.remove('selected'));
+  const defTimeBtn = document.querySelector('#pfTimeModeGroup .seg-btn[data-val="unspecified"]');
+  if (defTimeBtn) defTimeBtn.classList.add('selected');
+  document.getElementById('planFormOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('pfName').focus(), 80);
+}
+
+function openPlanEdit(id) {
+  const p = planBlocks.find(x => x.id === id);
+  if (!p) return;
+  editPlanId = id;
+  document.getElementById('planSheetTitle').textContent = '계획 수정';
+  document.getElementById('pfName').value = p.name;
+  document.getElementById('pfDesc').value = p.desc || '';
+  selectedPlanType = p.type;
+  selectedPlanTimeMode = p.timeUnspecified ? 'unspecified' : 'specified';
+  selectedPlanProgress = p.progressType;
+
+  document.querySelectorAll('#pfTypeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === p.type));
+  document.querySelectorAll('#pfTimeModeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === selectedPlanTimeMode));
+  document.querySelectorAll('#pfProgressGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === p.progressType));
+
+  document.getElementById('pfTimeFields').classList.toggle('hidden', selectedPlanTimeMode !== 'specified');
+  document.getElementById('pfDateStart').value = p.dateStart || '';
+  document.getElementById('pfDateEnd').value = p.dateEnd || '';
+  document.getElementById('pfTimeStart').value = p.timeStart || '';
+  document.getElementById('pfTimeEnd').value = p.timeEnd || '';
+
+  if (p.progressType === 'counter') {
+    document.getElementById('pfCounterFields').classList.remove('hidden');
+    document.getElementById('pfTotal').value = p.total || '';
+    document.getElementById('pfCurrent').value = p.current || 0;
+  } else {
+    document.getElementById('pfCounterFields').classList.add('hidden');
+  }
+
+  document.getElementById('planFormOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('pfName').focus(), 80);
+}
+
+function submitPlanForm() {
+  const name = document.getElementById('pfName').value.trim();
+  const desc = document.getElementById('pfDesc').value.trim();
+  if (!name) { document.getElementById('pfName').focus(); return; }
+  if (!selectedPlanType) { showToast('유형을 선택해주세요'); return; }
+  if (!selectedPlanProgress) { showToast('진행 체크 방식을 선택해주세요'); return; }
+
+  const timeUnspecified = selectedPlanTimeMode !== 'specified';
+  const dateStart = timeUnspecified ? '' : document.getElementById('pfDateStart').value;
+  const dateEnd = timeUnspecified ? '' : document.getElementById('pfDateEnd').value;
+  const timeStart = timeUnspecified ? '' : document.getElementById('pfTimeStart').value;
+  const timeEnd = timeUnspecified ? '' : document.getElementById('pfTimeEnd').value;
+
+  let total = null, current = null;
+  if (selectedPlanProgress === 'counter') {
+    total = parseInt(document.getElementById('pfTotal').value);
+    current = parseInt(document.getElementById('pfCurrent').value) || 0;
+    if (!total || total < 1) { document.getElementById('pfTotal').focus(); return; }
+    current = Math.max(0, Math.min(total, current));
+  }
+
+  if (editPlanId !== null) {
+    const p = planBlocks.find(x => x.id === editPlanId);
+    if (p) {
+      p.name = name; p.desc = desc; p.type = selectedPlanType; p.progressType = selectedPlanProgress;
+      p.timeUnspecified = timeUnspecified; p.dateStart = dateStart; p.dateEnd = dateEnd;
+      p.timeStart = timeStart; p.timeEnd = timeEnd;
+      if (selectedPlanProgress === 'counter') { p.total = total; p.current = current; }
+      else if (selectedPlanProgress === 'toggle') { if (p.done === undefined) p.done = false; }
+    }
+  } else {
+    const plan = {
+      id: Date.now() + Math.floor(Math.random()*1000),
+      name, desc, type: selectedPlanType, progressType: selectedPlanProgress,
+      timeUnspecified, dateStart, dateEnd, timeStart, timeEnd,
+      order: planBlocks.length
+    };
+    if (selectedPlanProgress === 'counter') { plan.total = total; plan.current = current; }
+    if (selectedPlanProgress === 'toggle') { plan.done = false; }
+    planBlocks.push(plan);
+  }
+
+  savePlanBlocks(); renderPlanList(); closeOverlay('planFormOverlay');
+}
+
+function askDeletePlan(id) {
+  const p = planBlocks.find(x => x.id === id);
+  if (!p) return;
+  deletePlanId = id;
+  document.getElementById('confirmMsg').innerHTML = `<strong>${esc(p.name)}</strong> 계획을 삭제할까요?<br>이 작업은 되돌릴 수 없어요.`;
+  document.getElementById('confirmOkBtn').onclick = () => {
+    planBlocks = planBlocks.filter(x => x.id !== deletePlanId);
+    savePlanBlocks(); renderPlanList(); closeOverlay('confirmOverlay');
+    // 기간계획에서 이 블록을 참조하고 있었다면 화면에는 "참조 삭제됨"으로 자동 반영됨 (renderPeriodList에서 처리)
+  };
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function changePlanCounter(id, delta) {
+  const p = planBlocks.find(x => x.id === id);
+  if (!p) return;
+  p.current = Math.max(0, Math.min(p.total, p.current + delta));
+  savePlanBlocks(); renderPlanList();
+}
+
+function togglePlanDone(id) {
+  const p = planBlocks.find(x => x.id === id);
+  if (!p) return;
+  p.done = !p.done;
+  savePlanBlocks(); renderPlanList();
+}
+
+function planProgressFraction(p) {
+  if (p.progressType === 'counter') return p.total > 0 ? p.current / p.total : 0;
+  if (p.progressType === 'toggle') return p.done ? 1 : 0;
+  return null;
+}
+function isPlanComplete(p) {
+  if (p.progressType === 'counter') return p.current >= p.total;
+  if (p.progressType === 'toggle') return !!p.done;
+  return false;
+}
+
+function planTimeRangeLabel(p) {
+  if (p.timeUnspecified) return '';
+  const parts = [];
+  if (p.dateStart) {
+    let dateStr = p.dateStart;
+    if (p.dateEnd && p.dateEnd !== p.dateStart) dateStr += ` ~ ${p.dateEnd}`;
+    parts.push(dateStr);
+  }
+  if (p.timeStart) {
+    let timeStr = p.timeStart;
+    if (p.timeEnd && p.timeEnd !== p.timeStart) timeStr += `~${p.timeEnd}`;
+    parts.push(timeStr);
+  }
+  return parts.join(' · ');
+}
+
+// "시간순" 서브탭 정렬 기준 키 (날짜 없으면 맨 뒤로)
+function planSortKey(p) {
+  const datePart = p.dateStart || '9999-99-99';
+  const timePart = p.timeStart || '99:99';
+  return `${datePart} ${timePart}`;
+}
+
+// 현재 서브탭에서 보여지는 리스트(time 또는 unspecified)를 다시 계산해 반환.
+// 인라인 onclick에 큰 배열을 직접 박아넣는 대신, 매번 같은 정렬 로직으로 재계산해
+// 인덱스만 주고받는 게 더 가볍고 안전하다.
+function getCurrentPlanSubtabList() {
+  let list = currentPlanSubtab === 'unspecified'
+    ? planBlocks.filter(p => p.timeUnspecified)
+    : planBlocks.filter(p => !p.timeUnspecified);
+  if (currentPlanSubtab === 'time') {
+    list = list.slice().sort((a, b) => planSortKey(a).localeCompare(planSortKey(b)));
+  } else {
+    list = list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+  return list;
+}
+
+function movePlanByIndex(idx, dir) {
+  const list = getCurrentPlanSubtabList();
+  const target = idx + dir;
+  if (target < 0 || target >= list.length) return;
+  const a = list[idx], b = list[target];
+  const tmp = a.order ?? 0; a.order = b.order ?? 0; b.order = tmp;
+  savePlanBlocks();
+  renderPlanList();
+}
+
+function renderPlanList() {
+  const el = document.getElementById('planList');
+
+  if (currentPlanSubtab === 'period') {
+    renderPeriodList(el);
+    return;
+  }
+
+  let list = getCurrentPlanSubtabList();
+
+  if (!list.length) {
+    el.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+      <p>${currentPlanSubtab === 'unspecified' ? '시간 미지정 계획이 없어요' : '계획을 추가해보세요'}</p>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = list.map((p, idx) => {
+    const complete = isPlanComplete(p);
+    let progressHtml = '';
+    if (p.progressType === 'counter') {
+      const pct = p.total > 0 ? Math.round(p.current / p.total * 100) : 0;
+      const atMin = p.current <= 0, atMax = p.current >= p.total;
+      progressHtml = `<div class="block-progress-row">
+        <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changePlanCounter(${p.id},-1)" ${atMin?'disabled':''} aria-label="감소">−</button>
+        <div class="fraction" style="font-size:18px;min-width:54px;">${p.current}<span style="font-size:13px;">/${p.total}</span></div>
+        <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changePlanCounter(${p.id},1)" ${atMax?'disabled':''} aria-label="증가">+</button>
+        <span class="counter-pct">${pct}%</span>
+        <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div></div>
+      </div>`;
+    } else if (p.progressType === 'toggle') {
+      progressHtml = `<div class="block-progress-row">
+        <button class="toggle-check ${p.done?'done':''}" onclick="togglePlanDone(${p.id})" aria-label="완료 토글">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+        <span class="toggle-label">${p.done ? '완료' : '미완료'}</span>
+      </div>`;
+    }
+    const timeStr = planTimeRangeLabel(p);
+    return `<div class="card block-card type-${p.type} ${complete && p.progressType!=='none' ? 'completed':''}" data-id="${p.id}">
+      <div class="reorder-handle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </div>
+      <div class="card-main">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <div class="card-title">${esc(p.name)}</div>
+            <div class="card-sub"><span class="type-chip">${TYPE_LABEL[p.type]}</span>${timeStr ? `<span class="time-chip">${esc(timeStr)}</span>` : ''}</div>
+          </div>
+          <div class="card-btns">
+            <button class="icon-btn" onclick="openImportPopup(${p.id})" aria-label="할일로 보내기">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+            </button>
+            <button class="icon-btn" onclick="openPlanEdit(${p.id})" aria-label="수정">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="icon-btn" onclick="askDeletePlan(${p.id})" aria-label="삭제">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+          <div class="move-btns ${currentPlanSubtab === 'time' ? 'move-btns-disabled-for-sort' : ''}">
+            <button class="move-btn" onclick="movePlanByIndex(${idx},-1)" ${idx===0 || currentPlanSubtab==='time'?'disabled':''} aria-label="위로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button class="move-btn" onclick="movePlanByIndex(${idx},1)" ${idx===list.length-1 || currentPlanSubtab==='time'?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          </div>
+        </div>
+        ${p.desc ? `<div class="block-desc">${esc(p.desc)}</div>` : ''}
+        ${progressHtml}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- 가져오기 (계획 → 할일) ---------- */
+function openImportPopup(planId) {
+  importPlanId = planId;
+  const today = new Date(appNow());
+  document.getElementById('importDateInput').value = formatKey(today);
+  document.getElementById('importPopupOverlay').classList.add('open');
+}
+
+function sendPlanToDate(mode) {
+  const p = planBlocks.find(x => x.id === importPlanId);
+  if (!p) return;
+
+  let targetKey;
+  if (mode === 'today') targetKey = TODAY_KEY();
+  else if (mode === 'tomorrow') targetKey = addDaysToKey(TODAY_KEY(), 1);
+  else {
+    const v = document.getElementById('importDateInput').value;
+    if (!v) { showToast('날짜를 선택해주세요'); return; }
+    targetKey = v;
+  }
+
+  const day = ensureDay(targetKey);
+  const newBlock = {
+    id: Date.now() + Math.floor(Math.random()*1000),
+    name: p.name, desc: p.desc || '', type: p.type === 'unspecified' ? 'todo' : p.type,
+    time: p.timeUnspecified ? 'none' : (p.timeStart ? 'custom' : 'none'),
+    customTime: p.timeStart || '',
+    progressType: p.progressType, sessions: []
+  };
+  if (p.progressType === 'counter') { newBlock.total = p.total; newBlock.current = p.current; }
+  if (p.progressType === 'toggle') { newBlock.done = p.done || false; }
+  day.blocks.push(newBlock);
+  saveDays();
+
+  // 계획 탭에서는 사라진다. 단, 기간계획이 이 블록을 참조하고 있었다면 참조가
+  // 끊어지므로(원본이 없어짐) renderPeriodList에서 "삭제됨"으로 표시된다.
+  planBlocks = planBlocks.filter(x => x.id !== importPlanId);
+  savePlanBlocks();
+
+  if (viewingDateKey === targetKey) renderBlocks();
+  renderPlanList();
+  closeOverlay('importPopupOverlay');
+  showToast(`${targetKey === TODAY_KEY() ? '오늘' : targetKey}의 할일로 보냈어요`);
+}
+
+/* =========================================================
+   PERIOD PLAN
+   ========================================================= */
+function onPeriodModeChanged() {
+  document.getElementById('ppMonthField').classList.toggle('hidden', selectedPeriodMode !== 'month');
+  document.getElementById('ppWeekField').classList.toggle('hidden', selectedPeriodMode !== 'week');
+  document.getElementById('ppRangeField').classList.toggle('hidden', selectedPeriodMode !== 'range');
+}
+
+function isoWeekToDateRange(weekStr) {
+  // weekStr 형식: "2026-W23"
+  const [yearStr, weekPart] = weekStr.split('-W');
+  const year = parseInt(yearStr), week = parseInt(weekPart);
+  const jan4 = new Date(year, 0, 4);
+  const jan4Day = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - jan4Day + 1 + (week - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: formatKey(monday), end: formatKey(sunday) };
+}
+
+function monthToDateRange(monthStr) {
+  // monthStr 형식: "2026-06"
+  const [year, month] = monthStr.split('-').map(Number);
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0); // 그 달의 마지막 날
+  return { start: formatKey(start), end: formatKey(end) };
+}
+
+function openPeriodPlanAdd() {
+  editPeriodId = null;
+  document.getElementById('periodSheetTitle').textContent = '기간계획 추가';
+  document.getElementById('ppDesc').value = '';
+  document.getElementById('ppMonthInput').value = '';
+  document.getElementById('ppWeekInput').value = '';
+  document.getElementById('ppRangeStart').value = '';
+  document.getElementById('ppRangeEnd').value = '';
+  selectedPeriodMode = null;
+  pendingPeriodRefs = [];
+  document.querySelectorAll('#ppModeGroup .seg-btn').forEach(b => b.classList.remove('selected'));
+  document.getElementById('ppMonthField').classList.add('hidden');
+  document.getElementById('ppWeekField').classList.add('hidden');
+  document.getElementById('ppRangeField').classList.add('hidden');
+  renderPendingRefList();
+  document.getElementById('periodFormOverlay').classList.add('open');
+}
+
+function openPeriodPlanEdit(id) {
+  const pp = periodPlans.find(x => x.id === id);
+  if (!pp) return;
+  editPeriodId = id;
+  document.getElementById('periodSheetTitle').textContent = '기간계획 수정';
+  document.getElementById('ppDesc').value = pp.desc || '';
+  selectedPeriodMode = pp.mode;
+  pendingPeriodRefs = (pp.refs || []).slice();
+
+  document.querySelectorAll('#ppModeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === pp.mode));
+  document.getElementById('ppMonthField').classList.toggle('hidden', pp.mode !== 'month');
+  document.getElementById('ppWeekField').classList.toggle('hidden', pp.mode !== 'week');
+  document.getElementById('ppRangeField').classList.toggle('hidden', pp.mode !== 'range');
+
+  if (pp.mode === 'month') document.getElementById('ppMonthInput').value = pp.dateStart ? pp.dateStart.slice(0,7) : '';
+  if (pp.mode === 'range') { document.getElementById('ppRangeStart').value = pp.dateStart || ''; document.getElementById('ppRangeEnd').value = pp.dateEnd || ''; }
+  // week input 값(YYYY-Www)은 역산이 번거로워 비워두고 날짜 범위만 유지 — 모드 유지 시 재선택 없이 저장 가능
+
+  renderPendingRefList();
+  document.getElementById('periodFormOverlay').classList.add('open');
+}
+
+function submitPeriodForm() {
+  const desc = document.getElementById('ppDesc').value.trim();
+  if (!selectedPeriodMode) { showToast('기간 종류를 선택해주세요'); return; }
+
+  let dateStart = '', dateEnd = '';
+  if (selectedPeriodMode === 'month') {
+    const v = document.getElementById('ppMonthInput').value;
+    if (!v) { showToast('월을 선택해주세요'); return; }
+    const r = monthToDateRange(v);
+    dateStart = r.start; dateEnd = r.end;
+  } else if (selectedPeriodMode === 'week') {
+    const v = document.getElementById('ppWeekInput').value;
+    if (v) {
+      const r = isoWeekToDateRange(v);
+      dateStart = r.start; dateEnd = r.end;
+    } else if (editPeriodId !== null) {
+      // 수정 시 주를 다시 고르지 않았다면 기존 값 유지
+      const existing = periodPlans.find(x => x.id === editPeriodId);
+      if (existing) { dateStart = existing.dateStart; dateEnd = existing.dateEnd; }
+    } else {
+      showToast('주를 선택해주세요'); return;
+    }
+  } else if (selectedPeriodMode === 'range') {
+    dateStart = document.getElementById('ppRangeStart').value;
+    dateEnd = document.getElementById('ppRangeEnd').value;
+    if (!dateStart || !dateEnd) { showToast('시작일과 종료일을 모두 선택해주세요'); return; }
+  }
+
+  if (editPeriodId !== null) {
+    const pp = periodPlans.find(x => x.id === editPeriodId);
+    if (pp) { pp.mode = selectedPeriodMode; pp.dateStart = dateStart; pp.dateEnd = dateEnd; pp.desc = desc; pp.refs = pendingPeriodRefs.slice(); }
+  } else {
+    periodPlans.push({
+      id: Date.now() + Math.floor(Math.random()*1000),
+      mode: selectedPeriodMode, dateStart, dateEnd, desc,
+      refs: pendingPeriodRefs.slice(), order: periodPlans.length
+    });
+  }
+
+  savePeriodPlans(); renderPlanList(); closeOverlay('periodFormOverlay');
+}
+
+function askDeletePeriod(id) {
+  const pp = periodPlans.find(x => x.id === id);
+  if (!pp) return;
+  deletePlanId = id;
+  document.getElementById('confirmMsg').innerHTML = `이 기간계획을 삭제할까요?<br>참조된 블록들은 삭제되지 않아요.`;
+  document.getElementById('confirmOkBtn').onclick = () => {
+    periodPlans = periodPlans.filter(x => x.id !== deletePlanId);
+    savePeriodPlans(); renderPlanList(); closeOverlay('confirmOverlay');
+  };
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function periodDateRangeLabel(pp) {
+  if (pp.mode === 'month' && pp.dateStart) return pp.dateStart.slice(0,7).replace('-', '년 ') + '월';
+  if (pp.dateStart && pp.dateEnd) return `${pp.dateStart} ~ ${pp.dateEnd}`;
+  return pp.dateStart || '';
+}
+
+/* ---------- 참조 선택 (할일 블록 + 계획 블록을 가리키는 약한 참조) ---------- */
+function openRefPicker() {
+  renderRefPickerList();
+  document.getElementById('refPickerOverlay').classList.add('open');
+}
+
+function resolveRef(ref) {
+  // 참조가 가리키는 실제 블록을 찾아 반환. 없으면 null (삭제된 것으로 간주).
+  if (ref.kind === 'plan') {
+    const p = planBlocks.find(x => x.id === ref.id);
+    return p ? { name: p.name, meta: TYPE_LABEL[p.type] } : null;
+  } else if (ref.kind === 'todo') {
+    const dayObj = days[ref.dateKey];
+    const b = dayObj && dayObj.blocks.find(x => x.id === ref.id);
+    return b ? { name: b.name, meta: `${TYPE_LABEL[b.type]} · ${ref.dateKey}` } : null;
+  }
+  return null;
+}
+
+function renderRefPickerList() {
+  const el = document.getElementById('refPickerList');
+  const items = [];
+
+  planBlocks.forEach(p => {
+    items.push({ kind: 'plan', id: p.id, dateKey: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type]}` });
+  });
+  // 최근 14일 + 향후 14일 범위의 할일 블록을 후보로 보여준다 (전체를 다 훑으면 너무 많아짐)
+  for (let i = -14; i <= 14; i++) {
+    const k = addDaysToKey(TODAY_KEY(), i);
+    const dayObj = days[k];
+    if (!dayObj) continue;
+    dayObj.blocks.forEach(b => {
+      items.push({ kind: 'todo', id: b.id, dateKey: k, name: b.name, meta: `할일 · ${TYPE_LABEL[b.type]} · ${k}` });
+    });
+  }
+
+  if (!items.length) {
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 블록이 없어요</p></div>`;
+    return;
+  }
+
+  el.innerHTML = items.map(item => {
+    const isSelected = pendingPeriodRefs.some(r => r.kind === item.kind && r.id === item.id && r.dateKey === item.dateKey);
+    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},${item.dateKey ? `'${item.dateKey}'` : 'null'})">
+      <span>${esc(item.name)}</span>
+      <span class="ref-picker-item-meta">${esc(item.meta)}</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleRefSelection(kind, id, dateKey) {
+  const idx = pendingPeriodRefs.findIndex(r => r.kind === kind && r.id === id && r.dateKey === dateKey);
+  if (idx >= 0) pendingPeriodRefs.splice(idx, 1);
+  else pendingPeriodRefs.push({ kind, id, dateKey });
+  renderRefPickerList();
+  renderPendingRefList();
+}
+
+function removePendingRef(idx) {
+  pendingPeriodRefs.splice(idx, 1);
+  renderPendingRefList();
+}
+
+function renderPendingRefList() {
+  const el = document.getElementById('ppRefList');
+  if (!pendingPeriodRefs.length) {
+    el.innerHTML = `<div class="ref-item-missing" style="padding:6px 2px;">아직 참조한 블록이 없어요</div>`;
+    return;
+  }
+  el.innerHTML = pendingPeriodRefs.map((ref, idx) => {
+    const resolved = resolveRef(ref);
+    const label = resolved ? resolved.name : '(삭제된 블록)';
+    const meta = resolved ? resolved.meta : '';
+    return `<div class="ref-item">
+      <span class="ref-item-name ${!resolved?'ref-item-missing':''}">${esc(label)}</span>
+      ${meta ? `<span class="ref-picker-item-meta">${esc(meta)}</span>` : ''}
+      <button class="ref-item-remove" onclick="removePendingRef(${idx})" aria-label="제거">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+}
+
+function renderPeriodList(el) {
+  const list = periodPlans.slice().sort((a, b) => (a.dateStart || '').localeCompare(b.dateStart || ''));
+  if (!list.length) {
+    el.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+      <p>기간계획을 추가해보세요</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = list.map(pp => {
+    const refsHtml = (pp.refs || []).map(ref => {
+      const resolved = resolveRef(ref);
+      if (!resolved) {
+        return `<div class="period-ref-chip ref-missing">(삭제된 블록)</div>`;
+      }
+      return `<div class="period-ref-chip"><span class="ref-chip-name">${esc(resolved.name)}</span><span class="ref-chip-meta">${esc(resolved.meta)}</span></div>`;
+    }).join('');
+    return `<div class="card period-card" data-id="${pp.id}">
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="period-date-range">${esc(periodDateRangeLabel(pp))}</div>
+          ${pp.desc ? `<div class="period-desc">${esc(pp.desc)}</div>` : ''}
+        </div>
+        <div class="card-btns">
+          <button class="icon-btn" onclick="openPeriodPlanEdit(${pp.id})" aria-label="수정">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn" onclick="askDeletePeriod(${pp.id})" aria-label="삭제">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>
+      </div>
+      ${refsHtml ? `<div class="period-ref-list">${refsHtml}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 
 /* =========================================================
@@ -1305,8 +1916,9 @@ function checkMidnightRollover() {
   const today = TODAY_KEY();
   if (today !== lastKnownTodayKey) {
     lastKnownTodayKey = today;
-    // 어제 날짜가 마무리됐으므로 게임 포인트에 어제 점수를 합산
-    addYesterdayScoreToGamePoints();
+    // 어제 날짜가 마무리됐으므로 게임 포인트를 재계산
+    reconcileGamePoints();
+    if (currentTab === 'game') renderGamePoints();
     const added = syncCarryoversForToday();
     const watchAdded = syncWatchForToday();
     if (viewingDateKey === today) {
@@ -1323,21 +1935,66 @@ setInterval(checkMidnightRollover, 60 * 1000);
 /* =========================================================
    GAME TAB — 누적 포인트
    ========================================================= */
-// 어제가 마무리되는 시점(자정/오전4시 롤오버)에 어제 종합점수를 누적 포인트에 더한다.
-// 같은 날짜가 중복으로 합산되지 않도록 gameLastAddedKey로 추적.
-function addYesterdayScoreToGamePoints() {
-  const yKey = addDaysToKey(TODAY_KEY(), -1);
-  if (gameLastAddedKey === yKey) return; // 이미 합산함
-  const data = computeDayScore(yKey);
-  if (data && data.score !== null) {
-    gamePoints += data.score;
-    gameLastAddedKey = yKey;
+// "마감된 날"이란 오늘(가상 오늘, 오전4시 기준)보다 이전인 모든 날짜를 말한다.
+// 마감된 날은 더 이상 변동이 없을 거라 기대하지만, 사용자가 과거 기록을 수정/삭제하면
+// 그 날의 점수가 바뀔 수 있다. 이 함수는 "이미 합산해둔 점수"와 "지금 다시 계산한 점수"를
+// 비교해서 차이만큼 gamePoints를 보정하고, 합산 기록(gameAddedScores)을 갱신한다.
+//
+// 검사 대상 날짜는 (a) days에 실제 기록이 있는 날짜 + (b) 이전에 합산 기록이 있는 날짜의
+// 합집합으로 한정한다 — 데이터가 전혀 없던 날짜까지 매번 훑을 필요는 없다.
+function reconcileGamePoints() {
+  const todayKey = TODAY_KEY();
+  const candidateKeys = new Set([...Object.keys(days), ...Object.keys(gameAddedScores)]);
+  let changed = false;
+
+  candidateKeys.forEach(key => {
+    if (key >= todayKey) return; // 오늘 또는 미래 날짜는 아직 마감되지 않음 — 건너뜀
+
+    const data = computeDayScore(key);
+    const newScore = (data && data.score !== null) ? data.score : 0;
+    const oldScore = gameAddedScores[key];
+
+    if (oldScore === undefined || oldScore !== newScore) {
+      gamePoints += (newScore - (oldScore ?? 0));
+      gameAddedScores[key] = newScore;
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    gamePoints = Math.max(0, gamePoints); // 음수로 내려가지 않게 안전망
     saveGamePoints();
   }
 }
 
 function renderGamePoints() {
   document.getElementById('gamePointsNum').textContent = Math.round(gamePoints).toLocaleString();
+}
+
+// 저장된 모든 날짜 기록을 처음부터 다시 훑어 누적 포인트를 재계산한다.
+// 블록을 지우거나 수정해서 과거 점수가 달라졌을 때, 이미 더해진 포인트에는
+// 자동으로 반영되지 않으므로 이 버튼으로 강제 재동기화한다.
+// 수동 "다시 계산" 버튼용: 현재 모든 데이터를 기준으로 누적 포인트를 처음부터 다시 합산한다.
+// (오늘은 아직 끝나지 않은 날이므로 제외한다.)
+function recalcGamePoints() {
+  const today = TODAY_KEY();
+  let total = 0;
+  const newAddedScores = {};
+  const sortedKeys = Object.keys(days).sort(); // YYYY-MM-DD 문자열은 사전순 = 날짜순
+
+  sortedKeys.forEach(key => {
+    if (key >= today) return; // 오늘/미래는 아직 진행 중이므로 제외
+    const data = computeDayScore(key);
+    const score = (data && data.score !== null) ? data.score : 0;
+    total += score;
+    newAddedScores[key] = score;
+  });
+
+  gamePoints = total;
+  gameAddedScores = newAddedScores;
+  saveGamePoints();
+  renderGamePoints();
+  showToast('현재 기록을 기준으로 누적 포인트를 다시 계산했어요');
 }
 
 /* =========================================================
@@ -1514,6 +2171,7 @@ function openMenu() {
   document.getElementById('wRoutine').value = weights.routine ?? 30;
   document.getElementById('wFocus').value = weights.focus ?? 20;
   document.getElementById('wWatch').value = weights.watch ?? 5;
+  document.getElementById('wUnspecified').value = weights.unspecified ?? 15;
   document.getElementById('menuOverlay').classList.add('open');
 }
 
@@ -1526,6 +2184,7 @@ function saveMenuSettings() {
     routine: parseInt(document.getElementById('wRoutine').value) || 0,
     focus: parseInt(document.getElementById('wFocus').value) || 0,
     watch: parseInt(document.getElementById('wWatch').value) || 0,
+    unspecified: parseInt(document.getElementById('wUnspecified').value) || 0,
     focusGoalMinutes: weights.focusGoalMinutes ?? FOCUS_GOAL_MINUTES_DEFAULT,
   };
   saveWeightsToStorage();
@@ -1535,7 +2194,7 @@ function saveMenuSettings() {
 }
 
 function exportBackup() {
-  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameLastAddedKey, exportedAt: new Date().toISOString() };
+  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, planBlocks, periodPlans, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1562,14 +2221,19 @@ function importBackup(e) {
       watchChainMeta = (data.watchChainMeta && typeof data.watchChainMeta === 'object') ? data.watchChainMeta : watchChainMeta;
       memos = (data.memos && typeof data.memos === 'object') ? data.memos : memos;
       if (typeof data.gamePoints === 'number') gamePoints = data.gamePoints;
-      if (typeof data.gameLastAddedKey === 'string') gameLastAddedKey = data.gameLastAddedKey;
+      if (data.gameAddedScores && typeof data.gameAddedScores === 'object') gameAddedScores = data.gameAddedScores;
+      if (Array.isArray(data.planBlocks)) planBlocks = data.planBlocks;
+      if (Array.isArray(data.periodPlans)) periodPlans = data.periodPlans;
       saveDays(); saveWeightsToStorage(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); saveGamePoints();
+      savePlanBlocks(); savePeriodPlans();
       syncCarryoversForToday();
       syncWatchForToday();
+      reconcileGamePoints();
       renderDayHeader(); renderBlocks(); renderScore();
       if (currentTab === 'memo') { renderMemoHeader(); renderMemos(); }
       if (currentTab === 'watch') { renderWatchHeader(); renderWatchBlocks(); }
       if (currentTab === 'game') renderGamePoints();
+      if (currentTab === 'plan') renderPlanList();
       closeOverlay('menuOverlay');
       showToast('백업을 불러왔어요');
     } catch (err) {
@@ -1607,7 +2271,7 @@ if ('serviceWorker' in navigator) {
    INIT
    ========================================================= */
 // 앱을 며칠 만에 다시 열었을 수도 있으니, 어제까지의 미합산 점수를 먼저 챙긴다.
-addYesterdayScoreToGamePoints();
+reconcileGamePoints();
 syncCarryoversForToday();
 syncWatchForToday();
 renderDayHeader();
