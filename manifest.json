@@ -1,6 +1,6 @@
 {
-  "name": "오늘 할 일 & 메모",
-  "short_name": "오늘 할 일",
+  "name": "블록카운터",
+  "short_name": "블록카운터",
   "description": "하루 블록과 메모를 기록하는 앱",
   "start_url": "./index.html",
   "display": "standalone",

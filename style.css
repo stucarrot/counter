@@ -118,9 +118,9 @@ html, body {
 .empty p { font-size: 14px; line-height: 1.5; }
 
 /* ===== Generic card ===== */
-.card { border: 1px solid var(--black); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; background: var(--white); position: relative; }
+.card { border: 1px solid var(--black); border-radius: 12px; padding: 10px 13px; margin-bottom: 10px; background: var(--white); position: relative; }
 
-.card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; gap: 8px; }
+.card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 8px; }
 .card-title-wrap { flex: 1; min-width: 0; }
 .card-title { font-size: 16px; font-weight: 600; letter-spacing: -0.2px; line-height: 1.3; word-break: break-word; }
 .card-sub { font-size: 12px; color: var(--gray-600); margin-top: 3px; }
@@ -187,8 +187,8 @@ html, body {
 .watch-delta-chip { font-size: 11px; font-weight: 600; color: var(--gray-600); flex-shrink: 0; }
 
 .game-points-card {
-  margin: 24px 16px; border: 1px solid var(--black); border-radius: 14px;
-  padding: 32px 20px; text-align: center;
+  margin: 24px 16px 16px; border: 1px solid var(--black); border-radius: 14px;
+  padding: 24px 20px; text-align: center;
 }
 .game-points-label { font-size: 13px; color: var(--gray-600); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
 .game-points-num { font-size: 48px; font-weight: 800; letter-spacing: -1px; }
@@ -413,3 +413,51 @@ body.reordering .move-btns { display: flex; }
 
 #toast { position: fixed; bottom: calc(24px + var(--safe-bottom)); left: 50%; transform: translateX(-50%) translateY(20px); background: var(--black); color: var(--white); padding: 11px 18px; border-radius: 10px; font-size: 13.5px; font-weight: 500; opacity: 0; pointer-events: none; transition: all .25s ease; z-index: 200; max-width: 85%; text-align: center; }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ===== Over-achieve badge ===== */
+.over-achieve-badge {
+  font-size: 10.5px; font-weight: 700; color: #fff;
+  background: #5a32c4; border-radius: 5px; padding: 1px 6px; flex-shrink: 0;
+}
+.prog-fill-over { background: #5a32c4; }
+
+/* ===== Split progress markers ===== */
+.prog-bar-relative { position: relative; overflow: visible; }
+.split-marker {
+  position: absolute; top: -2px; bottom: -2px; width: 2px;
+  background: rgba(0,0,0,0.35); border-radius: 1px; z-index: 1;
+  transform: translateX(-50%);
+}
+.split-marker-label {
+  position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
+  font-size: 8px; font-weight: 600; color: var(--gray-600); white-space: nowrap;
+}
+
+/* ===== Split date fields in block form ===== */
+.split-total-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.split-label-text { font-size: 13px; color: var(--gray-600); font-weight: 500; flex-shrink: 0; }
+.split-dates-list { display: flex; flex-direction: column; gap: 6px; }
+.split-date-row { display: flex; align-items: center; gap: 6px; }
+.split-date-input { flex: 2; border: 1px solid var(--black); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+.split-count-input { flex: 1; border: 1px solid var(--black); border-radius: 8px; padding: 8px 8px; font-size: 14px; text-align: center; width: 60px; }
+
+/* ===== Game spend UI ===== */
+.game-btns-row { display: flex; gap: 8px; margin-top: 16px; justify-content: center; }
+.game-spend-btn { font-size: 13px; }
+.game-ledger-wrap { padding: 0 16px 20px; }
+.game-ledger-title { font-size: 11.5px; font-weight: 700; color: var(--gray-600); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+.game-ledger { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--gray-200); border-radius: 12px; overflow: hidden; }
+.ledger-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--gray-200); gap: 10px; }
+.ledger-row:last-child { border-bottom: none; }
+.ledger-row-left { flex: 1; min-width: 0; }
+.ledger-reason { font-size: 13.5px; font-weight: 500; }
+.ledger-date { font-size: 10.5px; color: var(--gray-400); margin-top: 2px; }
+.ledger-amount { font-size: 16px; font-weight: 700; color: #c0392b; flex-shrink: 0; }
+.game-ledger-empty { padding: 20px; text-align: center; font-size: 13px; color: var(--gray-400); }
+
+/* ===== Ref item with date column layout ===== */
+.ref-item-col { flex-direction: column; align-items: stretch; gap: 6px; }
+.ref-item-top { display: flex; align-items: center; justify-content: space-between; }
+.ref-item-dates { display: flex; align-items: center; gap: 6px; }
+.ref-date-input { flex: 1; border: 1px solid var(--gray-300); border-radius: 7px; padding: 6px 8px; font-size: 12.5px; min-width: 0; }
+.ref-chip-date { font-size: 10.5px; color: var(--gray-600); flex-shrink: 0; }

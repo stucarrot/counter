@@ -48,6 +48,7 @@ let memos = JSON.parse(localStorage.getItem('pc_memos') || '{}');
 let activeTimer = JSON.parse(localStorage.getItem('pc_active_timer') || 'null');
 let gamePoints = parseFloat(localStorage.getItem('pc_game_points') || '0');
 let gameAddedScores = JSON.parse(localStorage.getItem('pc_game_added_scores') || '{}');
+let gameSpendLog = JSON.parse(localStorage.getItem('pc_game_spend_log') || '[]');
 let planBlocks = JSON.parse(localStorage.getItem('pc_plan_blocks') || '[]');
 let periodPlans = JSON.parse(localStorage.getItem('pc_period_plans') || '[]');
 
@@ -106,6 +107,7 @@ function saveActiveTimer() {
 function saveGamePoints() {
   localStorage.setItem('pc_game_points', String(gamePoints));
   localStorage.setItem('pc_game_added_scores', JSON.stringify(gameAddedScores));
+  localStorage.setItem('pc_game_spend_log', JSON.stringify(gameSpendLog));
 }
 
 function formatKey(d) {
@@ -181,7 +183,7 @@ function overlayClose(e, id) { if (e.target === document.getElementById(id)) clo
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay'].forEach(closeOverlay);
+    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay'].forEach(closeOverlay);
   }
 });
 
@@ -212,7 +214,6 @@ function renderDayHeader() {
   document.getElementById('dayLabel').textContent = isToday ? '오늘' : `${d.getMonth()+1}월 ${d.getDate()}일 (${weekday})`;
   document.getElementById('dayDate').textContent = isToday ? `${d.getMonth()+1}월 ${d.getDate()}일 (${weekday})` : '';
   document.getElementById('todayJumpBtn').classList.toggle('hidden', isToday);
-  document.getElementById('copyYesterdayBtn').style.display = isToday ? '' : 'none';
 }
 
 /* =========================================================
@@ -250,6 +251,51 @@ function toggleCustomTime() {
   document.getElementById('bfCustomTime').classList.toggle('hidden', selectedTime !== 'custom');
 }
 
+function toggleSplitFields() {
+  const isSplit = selectedTime === 'split';
+  document.getElementById('bfSplitFields').classList.toggle('hidden', !isSplit);
+  if (isSplit) {
+    // 쪼개기는 카운터 강제, bfCounterFields(일반 목표수 입력)는 숨김
+    selectedProgress = 'counter';
+    document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => {
+      btn.classList.toggle('selected', btn.dataset.val === 'counter');
+      btn.disabled = btn.dataset.val !== 'counter';
+    });
+    document.getElementById('bfCounterFields').classList.add('hidden');
+  } else {
+    document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => { btn.disabled = false; });
+    // 카운터가 선택돼 있었다면 일반 카운터 필드 다시 표시
+    if (selectedProgress === 'counter') document.getElementById('bfCounterFields').classList.remove('hidden');
+  }
+}
+
+let splitDates = []; // [{ date: 'YYYY-MM-DD', count: number }]
+
+function addSplitDate() {
+  splitDates.push({ date: '', count: 0 });
+  renderSplitDateRows();
+}
+
+function removeSplitDate(idx) {
+  splitDates.splice(idx, 1);
+  renderSplitDateRows();
+}
+
+function updateSplitDate(idx, field, value) {
+  if (splitDates[idx]) splitDates[idx][field] = field === 'count' ? (parseInt(value)||0) : value;
+}
+
+function renderSplitDateRows() {
+  const el = document.getElementById('bfSplitDates');
+  if (!splitDates.length) { el.innerHTML = ''; return; }
+  el.innerHTML = splitDates.map((sd, i) => `
+    <div class="split-date-row">
+      <input type="date" class="split-date-input" value="${sd.date}" onchange="updateSplitDate(${i},'date',this.value)">
+      <input type="number" class="split-count-input" placeholder="수" min="0" value="${sd.count||''}" inputmode="numeric" onchange="updateSplitDate(${i},'count',this.value)">
+      <button class="ref-item-remove" onclick="removeSplitDate(${i})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>`).join('');
+}
+
 function toggleCounterFields() {
   document.getElementById('bfCounterFields').classList.toggle('hidden', selectedProgress !== 'counter');
 }
@@ -268,9 +314,12 @@ function openBlockAdd() {
   document.getElementById('bfCustomTime').value = '';
   document.getElementById('bfCustomTime').classList.add('hidden');
   document.getElementById('bfCounterFields').classList.add('hidden');
+  document.getElementById('bfSplitFields').classList.add('hidden');
   document.getElementById('bfCarryover').checked = false;
   document.getElementById('bfCarryoverField').classList.remove('hidden');
   selectedType = null; selectedTime = 'none'; selectedProgress = null;
+  splitDates = [];
+  renderSplitDateRows();
   document.querySelectorAll('#bfTypeGroup .seg-btn, #bfTimeGroup .seg-btn, #bfProgressGroup .seg-btn').forEach(b => b.classList.remove('selected'));
   const noneTimeBtn = document.querySelector('#bfTimeGroup .seg-btn[data-val="none"]');
   if (noneTimeBtn) noneTimeBtn.classList.add('selected');
@@ -301,10 +350,27 @@ function openBlockEdit(id) {
   if (b.time === 'custom') { customTimeInput.classList.remove('hidden'); customTimeInput.value = b.customTime || ''; }
   else customTimeInput.classList.add('hidden');
 
+  // 쪼개기 필드 초기화
+  splitDates = (b.splitDates || []).map(sd => ({ ...sd }));
+  const isSplit = b.time === 'split';
+  document.getElementById('bfSplitFields').classList.toggle('hidden', !isSplit);
+  if (isSplit) {
+    document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => { btn.disabled = btn.dataset.val !== 'counter'; });
+    document.getElementById('bfSplitTotal').value = b.total || '';
+  } else {
+    document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => { btn.disabled = false; });
+  }
+  renderSplitDateRows();
+
   if (b.progressType === 'counter') {
-    document.getElementById('bfCounterFields').classList.remove('hidden');
-    document.getElementById('bfTotal').value = b.total || '';
-    document.getElementById('bfCurrent').value = b.current || 0;
+    if (isSplit) {
+      document.getElementById('bfCounterFields').classList.add('hidden');
+      document.getElementById('bfSplitTotal').value = b.total || '';
+    } else {
+      document.getElementById('bfCounterFields').classList.remove('hidden');
+      document.getElementById('bfTotal').value = b.total || '';
+      document.getElementById('bfCurrent').value = b.current || 0;
+    }
   } else {
     document.getElementById('bfCounterFields').classList.add('hidden');
   }
@@ -328,14 +394,23 @@ function submitBlockForm() {
   const customTime = selectedTime === 'custom' ? document.getElementById('bfCustomTime').value : '';
   let total = null, current = null;
   if (selectedProgress === 'counter') {
-    total = parseInt(document.getElementById('bfTotal').value);
+    total = selectedTime === 'split'
+      ? (parseInt(document.getElementById('bfSplitTotal').value) || 0)
+      : parseInt(document.getElementById('bfTotal').value);
     current = parseInt(document.getElementById('bfCurrent').value) || 0;
-    if (!total || total < 1) { document.getElementById('bfTotal').focus(); return; }
-    current = Math.max(0, Math.min(total, current));
+    if (!total || total < 1) {
+      if (selectedTime === 'split') document.getElementById('bfSplitTotal').focus();
+      else document.getElementById('bfTotal').focus();
+      return;
+    }
+    current = Math.max(0, current);
   }
 
+  const isSplit = selectedTime === 'split';
+  const savedSplitDates = isSplit ? splitDates.filter(sd => sd.date).map(sd => ({ ...sd })) : [];
+
   const isRoutineType = selectedType === 'routine';
-  const wantsCarryover = isRoutineType || document.getElementById('bfCarryover').checked;
+  const wantsCarryover = isRoutineType || isSplit || document.getElementById('bfCarryover').checked;
 
   const day = ensureDay(viewingDateKey);
 
@@ -349,6 +424,7 @@ function submitBlockForm() {
 
       if (selectedProgress === 'counter') { b.total = total; b.current = current; }
       else if (selectedProgress === 'toggle') { if (b.done === undefined) b.done = false; }
+      if (isSplit) b.splitDates = savedSplitDates; else delete b.splitDates;
 
       applyCarryoverFlag(b, wantsCarryover);
     }
@@ -360,6 +436,7 @@ function submitBlockForm() {
     };
     if (selectedProgress === 'counter') { block.total = total; block.current = current; }
     if (selectedProgress === 'toggle') { block.done = false; }
+    if (isSplit) block.splitDates = savedSplitDates;
     applyCarryoverFlag(block, wantsCarryover);
     day.blocks.push(block);
   }
@@ -400,6 +477,11 @@ function askDeleteBlock(id) {
       carryoverMeta[b.carryoverId] = { stopped: true };
       saveCarryoverMeta();
     }
+    // 삭제되는 블록의 타이머가 진행 중이면 강제 정리
+    if (activeTimer && activeTimer.blockId === deleteBlockId) {
+      activeTimer = null;
+      saveActiveTimer();
+    }
     saveDays(); renderBlocks(); renderScore(); closeOverlay('confirmOverlay');
   };
   document.getElementById('confirmOverlay').classList.add('open');
@@ -409,7 +491,7 @@ function changeBlockCounter(id, delta) {
   const day = ensureDay(viewingDateKey);
   const b = day.blocks.find(x => x.id === id);
   if (!b) return;
-  b.current = Math.max(0, Math.min(b.total, b.current + delta));
+  b.current = Math.max(0, b.current + delta); // 초과달성 허용: 상한 없음
   saveDays(); renderBlocks(); renderScore();
 }
 
@@ -435,9 +517,40 @@ function timeLabelFor(b) {
 }
 
 function blockProgressFraction(b) {
-  if (b.progressType === 'counter') return b.total > 0 ? b.current / b.total : 0;
+  if (b.progressType === 'counter') return b.total > 0 ? Math.min(1, b.current / b.total) : 0;
   if (b.progressType === 'toggle') return b.done ? 1 : 0;
   return null;
+}
+
+// 초과달성 시 추가 점수 (가중치만 적용, 100점 풀에 포함 안 됨)
+function blockOverAchieveBonus(b) {
+  if (b.progressType !== 'counter') return 0;
+  if (b.current <= b.total || b.total <= 0) return 0;
+  const overFrac = (b.current - b.total) / b.total; // 초과 비율
+  const w = weights[b.type] ?? 25;
+  return overFrac * w; // 가중치 비례 보너스 (점수 단위는 raw weightedSum과 동일)
+}
+
+// 이행 블록에서 특정 날짜의 "그 날만의 진행도"를 계산.
+// 전날부터 이어진 블록이라면 (전날 진행도) → (이날 진행도)의 증분만 그날 기여로 본다.
+// 루틴은 매일 리셋이므로 해당 없음. toggle은 그날 done 여부로만 판단.
+function blockDayFraction(b, dayKey) {
+  if (!b.carryover || b.type === 'routine') return blockProgressFraction(b);
+  if (b.progressType === 'toggle') return b.done ? 1 : 0;
+  if (b.progressType === 'counter') {
+    const todayFrac = b.total > 0 ? Math.min(1, b.current / b.total) : 0;
+    // 전날 같은 carryoverId 블록을 찾아 전날 진행도 계산
+    const prevKey = addDaysToKey(dayKey, -1);
+    const prevDay = days[prevKey];
+    let prevFrac = 0;
+    if (prevDay && b.carryoverId) {
+      const prevBlock = prevDay.blocks.find(x => x.carryoverId === b.carryoverId);
+      if (prevBlock) prevFrac = prevBlock.total > 0 ? Math.min(1, prevBlock.current / prevBlock.total) : 0;
+    }
+    // 그날 달성한 증분 (0 이상)
+    return Math.max(0, todayFrac - prevFrac);
+  }
+  return blockProgressFraction(b);
 }
 
 function isBlockComplete(b) {
@@ -604,13 +717,35 @@ function renderBlocks() {
     let progressHtml = '';
     if (b.progressType === 'counter') {
       const pct = b.total > 0 ? Math.round(b.current / b.total * 100) : 0;
-      const atMin = b.current <= 0, atMax = b.current >= b.total;
+      const atMin = b.current <= 0;
+      const overAchieved = b.current > b.total;
+      const fillPct = Math.min(100, pct);
+      const overText = overAchieved ? `<span class="over-achieve-badge">+${b.current - b.total}</span>` : '';
+
+      // 쪼개기 수직선 마커 생성
+      let splitMarkersHtml = '';
+      if (b.time === 'split' && b.splitDates && b.splitDates.length && b.total > 0) {
+        let cumCount = 0;
+        const markers = [];
+        b.splitDates.forEach(sd => {
+          cumCount += (sd.count || 0);
+          const markerPct = Math.min(100, Math.round(cumCount / b.total * 100));
+          if (markerPct > 0 && markerPct < 100) {
+            const d = keyToDate(sd.date);
+            const label = `${d.getMonth()+1}/${d.getDate()}`;
+            markers.push(`<div class="split-marker" style="left:${markerPct}%" title="${label} 목표: ${cumCount}/${b.total}"><div class="split-marker-label">${label}</div></div>`);
+          }
+        });
+        splitMarkersHtml = markers.join('');
+      }
+
       progressHtml = `<div class="block-progress-row">
         <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changeBlockCounter(${b.id},-1)" ${atMin?'disabled':''} aria-label="감소">−</button>
         <div class="fraction" style="font-size:18px;min-width:54px;">${b.current}<span style="font-size:13px;">/${b.total}</span></div>
-        <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changeBlockCounter(${b.id},1)" ${atMax?'disabled':''} aria-label="증가">+</button>
+        <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changeBlockCounter(${b.id},1)" aria-label="증가">+</button>
         <span class="counter-pct">${pct}%</span>
-        <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div></div>
+        ${overText}
+        <div class="prog-wrap"><div class="prog-bar prog-bar-relative"><div class="prog-fill ${overAchieved?'prog-fill-over':''}" style="width:${fillPct}%"></div>${splitMarkersHtml}</div></div>
       </div>`;
     } else if (b.progressType === 'toggle') {
       progressHtml = `<div class="block-progress-row">
@@ -731,7 +866,14 @@ function renderScore() {
     weightedSum += watchWeight * watchFrac;
     weightTotal += watchWeight;
   }
-  const score = weightTotal > 0 ? Math.round((weightedSum / weightTotal) * 100) : 0;
+  const baseScore = weightTotal > 0 ? Math.round((weightedSum / weightTotal) * 100) : 0;
+  // 초과달성 보너스: 가중치 비례로 합산, 기준 weightTotal 대비 %로 환산해 총점에 추가
+  let overBonus = 0;
+  if (weightTotal > 0) {
+    scorable.forEach(b => { overBonus += blockOverAchieveBonus(b); });
+    overBonus = Math.round((overBonus / weightTotal) * 100);
+  }
+  const score = Math.max(0, baseScore) + overBonus;
 
   let feedback;
   if (score >= 90) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
@@ -1454,24 +1596,16 @@ function renderRefPickerList() {
   planBlocks.forEach(p => {
     items.push({ kind: 'plan', id: p.id, dateKey: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type]}` });
   });
-  // 최근 14일 + 향후 14일 범위의 할일 블록을 후보로 보여준다 (전체를 다 훑으면 너무 많아짐)
-  for (let i = -14; i <= 14; i++) {
-    const k = addDaysToKey(TODAY_KEY(), i);
-    const dayObj = days[k];
-    if (!dayObj) continue;
-    dayObj.blocks.forEach(b => {
-      items.push({ kind: 'todo', id: b.id, dateKey: k, name: b.name, meta: `할일 · ${TYPE_LABEL[b.type]} · ${k}` });
-    });
-  }
+  // 기간계획 참조는 계획 탭 블록만 허용
 
   if (!items.length) {
-    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 블록이 없어요</p></div>`;
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 계획 블록이 없어요</p></div>`;
     return;
   }
 
   el.innerHTML = items.map(item => {
     const isSelected = pendingPeriodRefs.some(r => r.kind === item.kind && r.id === item.id && r.dateKey === item.dateKey);
-    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},${item.dateKey ? `'${item.dateKey}'` : 'null'})">
+    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},null)">
       <span>${esc(item.name)}</span>
       <span class="ref-picker-item-meta">${esc(item.meta)}</span>
     </div>`;
@@ -1481,7 +1615,7 @@ function renderRefPickerList() {
 function toggleRefSelection(kind, id, dateKey) {
   const idx = pendingPeriodRefs.findIndex(r => r.kind === kind && r.id === id && r.dateKey === dateKey);
   if (idx >= 0) pendingPeriodRefs.splice(idx, 1);
-  else pendingPeriodRefs.push({ kind, id, dateKey });
+  else pendingPeriodRefs.push({ kind, id, dateKey, refDate: '', refDateEnd: '' });
   renderRefPickerList();
   renderPendingRefList();
 }
@@ -1500,15 +1634,24 @@ function renderPendingRefList() {
   el.innerHTML = pendingPeriodRefs.map((ref, idx) => {
     const resolved = resolveRef(ref);
     const label = resolved ? resolved.name : '(삭제된 블록)';
-    const meta = resolved ? resolved.meta : '';
-    return `<div class="ref-item">
-      <span class="ref-item-name ${!resolved?'ref-item-missing':''}">${esc(label)}</span>
-      ${meta ? `<span class="ref-picker-item-meta">${esc(meta)}</span>` : ''}
-      <button class="ref-item-remove" onclick="removePendingRef(${idx})" aria-label="제거">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+    return `<div class="ref-item ref-item-col">
+      <div class="ref-item-top">
+        <span class="ref-item-name ${!resolved?'ref-item-missing':''}">${esc(label)}</span>
+        <button class="ref-item-remove" onclick="removePendingRef(${idx})" aria-label="제거">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="ref-item-dates">
+        <input type="date" class="ref-date-input" placeholder="날짜" value="${ref.refDate||''}" onchange="updateRefDate(${idx},'refDate',this.value)">
+        <span class="range-sep">~</span>
+        <input type="date" class="ref-date-input" placeholder="종료(선택)" value="${ref.refDateEnd||''}" onchange="updateRefDate(${idx},'refDateEnd',this.value)">
+      </div>
     </div>`;
   }).join('');
+}
+
+function updateRefDate(idx, field, value) {
+  if (pendingPeriodRefs[idx]) pendingPeriodRefs[idx][field] = value;
 }
 
 function renderPeriodList(el) {
@@ -1521,12 +1664,28 @@ function renderPeriodList(el) {
     return;
   }
   el.innerHTML = list.map(pp => {
-    const refsHtml = (pp.refs || []).map(ref => {
+    // refs를 날짜순으로 정렬: 날짜 미지정 → 맨 앞, 날짜 지정 → 날짜순, 날짜 같으면 날짜(단일) > 날짜범위
+    const sortedRefs = (pp.refs || []).slice().sort((a, b) => {
+      const aDate = a.refDate || '';
+      const bDate = b.refDate || '';
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return -1;
+      if (!bDate) return 1;
+      if (aDate !== bDate) return aDate.localeCompare(bDate);
+      // 날짜 같으면: refDateEnd 없는 게 우선 (단일 날짜 > 날짜범위)
+      const aHasEnd = !!(a.refDateEnd);
+      const bHasEnd = !!(b.refDateEnd);
+      if (aHasEnd !== bHasEnd) return aHasEnd ? 1 : -1;
+      return 0;
+    });
+    const refsHtml = sortedRefs.map(ref => {
       const resolved = resolveRef(ref);
-      if (!resolved) {
-        return `<div class="period-ref-chip ref-missing">(삭제된 블록)</div>`;
-      }
-      return `<div class="period-ref-chip"><span class="ref-chip-name">${esc(resolved.name)}</span><span class="ref-chip-meta">${esc(resolved.meta)}</span></div>`;
+      if (!resolved) return `<div class="period-ref-chip ref-missing">(삭제된 블록)</div>`;
+      const dateLabel = ref.refDate ? (ref.refDateEnd ? `${ref.refDate} ~ ${ref.refDateEnd}` : ref.refDate) : '';
+      return `<div class="period-ref-chip">
+        <span class="ref-chip-name">${esc(resolved.name)}</span>
+        ${dateLabel ? `<span class="ref-chip-date">${esc(dateLabel)}</span>` : ''}
+      </div>`;
     }).join('');
     return `<div class="card period-card" data-id="${pp.id}">
       <div class="card-header">
@@ -1969,6 +2128,51 @@ function reconcileGamePoints() {
 
 function renderGamePoints() {
   document.getElementById('gamePointsNum').textContent = Math.round(gamePoints).toLocaleString();
+  renderGameLedger();
+}
+
+function renderGameLedger() {
+  const el = document.getElementById('gameLedger');
+  if (!el) return;
+  if (!gameSpendLog.length) {
+    el.innerHTML = `<div class="game-ledger-empty">소모 내역이 없어요</div>`;
+    return;
+  }
+  // 최신 순으로 표시
+  const sorted = gameSpendLog.slice().reverse();
+  el.innerHTML = sorted.map(item => {
+    const d = new Date(item.time);
+    const dateStr = `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+    const timeStr = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    return `<div class="ledger-row">
+      <div class="ledger-row-left">
+        <div class="ledger-reason">${esc(item.reason)}</div>
+        <div class="ledger-date">${dateStr} ${timeStr}</div>
+      </div>
+      <div class="ledger-amount">−${item.amount.toLocaleString()}</div>
+    </div>`;
+  }).join('');
+}
+
+function openSpendOverlay() {
+  document.getElementById('spendAmount').value = '';
+  document.getElementById('spendReason').value = '';
+  document.getElementById('spendOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('spendAmount').focus(), 80);
+}
+
+function submitSpend() {
+  const amount = parseInt(document.getElementById('spendAmount').value);
+  const reason = document.getElementById('spendReason').value.trim();
+  if (!amount || amount < 1) { document.getElementById('spendAmount').focus(); return; }
+  if (!reason) { document.getElementById('spendReason').focus(); return; }
+  if (amount > gamePoints) { showToast('보유 포인트보다 많이 소모할 수 없어요'); return; }
+  gamePoints -= amount;
+  gameSpendLog.push({ amount, reason, time: new Date().toISOString() });
+  saveGamePoints();
+  renderGamePoints();
+  closeOverlay('spendOverlay');
+  showToast(`${amount.toLocaleString()}포인트를 소모했어요`);
 }
 
 // 저장된 모든 날짜 기록을 처음부터 다시 훑어 누적 포인트를 재계산한다.
@@ -2094,7 +2298,7 @@ function computeDayScore(dayKey) {
   let weightedSum = 0, weightTotal = 0;
   scorable.forEach(b => {
     const w = weights[b.type] ?? 25;
-    weightedSum += w * blockProgressFraction(b);
+    weightedSum += w * blockDayFraction(b, dayKey);
     weightTotal += w;
   });
   if (focusWeight > 0) {
@@ -2106,7 +2310,13 @@ function computeDayScore(dayKey) {
     weightedSum += watchWeight * watchFrac;
     weightTotal += watchWeight;
   }
-  const score = weightTotal > 0 ? Math.round((weightedSum / weightTotal) * 100) : null;
+  const baseScore = weightTotal > 0 ? Math.round((weightedSum / weightTotal) * 100) : null;
+  let overBonus = 0;
+  if (weightTotal > 0) {
+    scorable.forEach(b => { overBonus += blockOverAchieveBonus(b); });
+    overBonus = Math.round((overBonus / weightTotal) * 100);
+  }
+  const score = baseScore !== null ? Math.max(0, baseScore) + overBonus : null;
   return { score, blocks: day.blocks, watchBlocks: day.watchBlocks || [], totalFocusMs };
 }
 
@@ -2194,7 +2404,7 @@ function saveMenuSettings() {
 }
 
 function exportBackup() {
-  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, planBlocks, periodPlans, exportedAt: new Date().toISOString() };
+  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2222,6 +2432,7 @@ function importBackup(e) {
       memos = (data.memos && typeof data.memos === 'object') ? data.memos : memos;
       if (typeof data.gamePoints === 'number') gamePoints = data.gamePoints;
       if (data.gameAddedScores && typeof data.gameAddedScores === 'object') gameAddedScores = data.gameAddedScores;
+      if (Array.isArray(data.gameSpendLog)) gameSpendLog = data.gameSpendLog;
       if (Array.isArray(data.planBlocks)) planBlocks = data.planBlocks;
       if (Array.isArray(data.periodPlans)) periodPlans = data.periodPlans;
       saveDays(); saveWeightsToStorage(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); saveGamePoints();

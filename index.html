@@ -7,10 +7,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="오늘 할 일">
+<meta name="apple-mobile-web-app-title" content="블록카운터">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<title>오늘 할 일</title>
+<title>블록카운터</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -76,7 +76,6 @@
     <div class="page-bar">
       <span class="page-bar-title">블록</span>
       <div class="page-bar-actions">
-        <button class="btn-secondary" id="copyYesterdayBtn" onclick="copyYesterday()">어제 복사</button>
         <button class="btn-add" onclick="openBlockAdd()" aria-label="블록 추가">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           추가
@@ -131,7 +130,7 @@
     </div>
     <div id="memoList" class="memo-list"></div>
     <div class="memo-input-bar">
-      <textarea id="memoInput" class="memo-input" placeholder="메모 입력..." rows="1" oninput="autoGrowMemoInput(this)" onkeydown="handleMemoKeydown(event)"></textarea>
+      <textarea id="memoInput" class="memo-input" placeholder="메모 입력..." rows="1" oninput="autoGrowMemoInput(this)"></textarea>
       <button class="memo-send-btn" onclick="sendMemo()" aria-label="전송">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
@@ -139,12 +138,21 @@
   </div>
 
   <!-- ============ GAME PAGE ============ -->
-  <div class="page hidden" id="page-game">
+  <div class="page hidden" id="page-game" style="overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(20px + var(--safe-bottom))">
     <div class="game-points-card">
       <div class="game-points-label">누적 포인트</div>
       <div class="game-points-num" id="gamePointsNum">0</div>
       <div class="game-points-hint">매일의 종합 점수가 합산돼요</div>
-      <button class="btn-secondary game-recalc-btn" onclick="recalcGamePoints()">현재 기록으로 다시 계산</button>
+      <div class="game-btns-row">
+        <button class="btn-add game-spend-btn" onclick="openSpendOverlay()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          소모하기
+        </button>
+      </div>
+    </div>
+    <div class="game-ledger-wrap">
+      <div class="game-ledger-title">소모 내역</div>
+      <div id="gameLedger" class="game-ledger"></div>
     </div>
   </div>
 
@@ -179,13 +187,24 @@
     <div class="field">
       <label>시간대</label>
       <div class="seg-group" id="bfTimeGroup">
-        <button class="seg-btn" data-val="none" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">미지정</button>
-        <button class="seg-btn" data-val="morning" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">오전</button>
-        <button class="seg-btn" data-val="afternoon" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">오후</button>
-        <button class="seg-btn" data-val="night" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">밤</button>
-        <button class="seg-btn" data-val="custom" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime()">시간 지정</button>
+        <button class="seg-btn" data-val="none" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">미지정</button>
+        <button class="seg-btn" data-val="morning" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">오전</button>
+        <button class="seg-btn" data-val="afternoon" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">오후</button>
+        <button class="seg-btn" data-val="night" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">밤</button>
+        <button class="seg-btn" data-val="custom" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">시간 지정</button>
+        <button class="seg-btn" data-val="split" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">쪼개기</button>
       </div>
       <input type="time" id="bfCustomTime" class="hidden" style="margin-top:8px;">
+    </div>
+
+    <div class="field hidden" id="bfSplitFields">
+      <label>쪼개기 설정</label>
+      <div class="split-total-row">
+        <span class="split-label-text">총 카운트 수</span>
+        <input type="number" id="bfSplitTotal" placeholder="예: 30" min="1" max="9999" inputmode="numeric" style="width:100px;">
+      </div>
+      <div id="bfSplitDates" class="split-dates-list" style="margin-top:10px;"></div>
+      <button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="addSplitDate()">+ 날짜별 배분 추가</button>
     </div>
 
     <div class="field">
@@ -504,6 +523,26 @@
     <p id="confirmMsg"></p>
     <button class="btn-delete" id="confirmOkBtn">삭제</button>
     <button class="btn-keep" onclick="closeOverlay('confirmOverlay')">취소</button>
+  </div>
+</div>
+
+<!-- ============ GAME SPEND SHEET ============ -->
+<div class="overlay" id="spendOverlay" onclick="overlayClose(event,'spendOverlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2>포인트 소모</h2>
+    <div class="field">
+      <label>소모 포인트</label>
+      <input type="number" id="spendAmount" placeholder="예: 500" min="1" inputmode="numeric">
+    </div>
+    <div class="field">
+      <label>소모 이유</label>
+      <input type="text" id="spendReason" placeholder="예: 영화 관람" maxlength="80" autocomplete="off">
+    </div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('spendOverlay')">취소</button>
+      <button class="btn-save" onclick="submitSpend()">소모</button>
+    </div>
   </div>
 </div>
 
