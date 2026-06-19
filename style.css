@@ -197,6 +197,7 @@ html, body {
 
 .watch-memo-list { max-height: 260px; }
 .watch-memo-input-bar { border-top: 1px solid var(--gray-200); padding: 10px 0; margin-top: 10px; }
+.sheet-watch-memo { padding-left: 10px; padding-right: 10px; }
 
 .type-chip { display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,0.08); margin-right: 6px; letter-spacing: .2px; }
 .time-chip { font-size: 11px; color: var(--gray-600); font-weight: 500; }

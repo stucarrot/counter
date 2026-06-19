@@ -1999,6 +1999,14 @@ function copyWatchMemo(memoId) {
   }
 }
 
+function deleteWatchMemo(memoId) {
+  const found = findWatchById(watchMemoTargetId);
+  if (!found) return;
+  found.w.memos = (found.w.memos || []).filter(x => x.id !== memoId);
+  saveDays();
+  renderWatchMemoList();
+}
+
 function renderWatchMemoList() {
   const found = findWatchById(watchMemoTargetId);
   const el = document.getElementById('watchMemoList');
@@ -2015,6 +2023,7 @@ function renderWatchMemoList() {
       <div class="memo-meta-row">
         <span class="memo-time">${timeStr}</span>
         <button class="memo-copy-btn" onclick="copyWatchMemo(${m.id})">복사</button>
+        <button class="memo-delete-btn" onclick="deleteWatchMemo(${m.id})">삭제</button>
       </div>
     </div>`;
   }).join('');
