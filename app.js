@@ -2263,6 +2263,13 @@ function copyMemo(id) {
   }
 }
 
+function deleteMemo(id) {
+  if (!memos[viewingMemoDateKey]) return;
+  memos[viewingMemoDateKey] = memos[viewingMemoDateKey].filter(x => x.id !== id);
+  saveMemos();
+  renderMemos();
+}
+
 function renderMemos() {
   const el = document.getElementById('memoList');
   const list = memos[viewingMemoDateKey] || [];
@@ -2278,6 +2285,7 @@ function renderMemos() {
       <div class="memo-meta-row">
         <span class="memo-time">${timeStr}</span>
         <button class="memo-copy-btn" onclick="copyMemo(${m.id})">복사</button>
+        <button class="memo-delete-btn" onclick="deleteMemo(${m.id})">삭제</button>
       </div>
     </div>`;
   }).join('');
