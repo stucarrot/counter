@@ -807,8 +807,6 @@ function renderBlocks() {
       eveningLineInserted = true;
     }
 
-    const idx = realIdx;
-    const { b: _, ...rest } = { b, realIdx }; // unused warning 회피용
     const idx = realIdx; // moveBlock 등에서 쓰는 실제 배열 인덱스
     const complete = isBlockComplete(b);
     let progressHtml = '';
