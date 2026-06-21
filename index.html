@@ -29,12 +29,6 @@
       <button class="ghost-btn icon-only" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false" aria-label="순서 변경">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
-      <button class="ghost-btn icon-only" id="darkModeToggle" onclick="toggleDarkMode()" aria-label="다크모드">
-        <!-- 라이트모드일 때: 달 아이콘 -->
-        <svg class="dark-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-        <!-- 다크모드일 때: 해 아이콘 -->
-        <svg class="dark-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      </button>
       <button class="ghost-btn icon-only" onclick="openMenu()" aria-label="더보기">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
       </button>
@@ -46,14 +40,13 @@
     <div class="subtabs">
       <button class="subtab-btn active" id="planSubtab-time" onclick="switchPlanSubtab('time')">시간순</button>
       <button class="subtab-btn" id="planSubtab-unspecified" onclick="switchPlanSubtab('unspecified')">시간미지정</button>
-      <button class="subtab-btn" id="planSubtab-period" onclick="switchPlanSubtab('period')">기간/목록</button>
+      <button class="subtab-btn" id="planSubtab-period" onclick="switchPlanSubtab('period')">기간계획</button>
     </div>
 
     <div class="page-bar">
       <span class="page-bar-title">계획</span>
       <div class="page-bar-actions">
-        <button class="btn-secondary hidden" id="periodAddBtn" onclick="openPeriodPlanAdd()">+ 기간</button>
-        <button class="btn-secondary hidden" id="listAddBtn" onclick="openListBlockAdd()">+ 목록</button>
+        <button class="btn-secondary hidden" id="periodAddBtn" onclick="openPeriodPlanAdd()">+ 기간계획</button>
         <button class="btn-add" id="planAddBtn" onclick="openPlanAdd()" aria-label="계획 추가">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           추가
@@ -122,69 +115,25 @@
 
   <!-- ============ MEMO PAGE ============ -->
   <div class="page hidden" id="page-memo">
-    <!-- Header bar -->
-    <div class="tw-header">
-      <div id="twViewTimeline" class="tw-header-inner">
-        <div class="tw-header-nav">
-          <button class="day-nav" id="memoDayPrevBtn" onclick="changeMemoDay(-1)" aria-label="이전 날">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          </button>
-          <div class="day-label-wrap">
-            <div class="day-label" id="memoDayLabel">오늘</div>
-            <div class="day-date" id="memoDayDate"></div>
-          </div>
-          <button class="day-nav" id="memoDayNextBtn" onclick="changeMemoDay(1)" aria-label="다음 날">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-          </button>
-          <button class="today-jump" id="memoTodayJumpBtn" onclick="jumpMemoToday()">오늘로</button>
-        </div>
-        <button class="tw-bookmark-tab-btn" onclick="openMemoBookmarks()" aria-label="북마크">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-        </button>
+    <div class="day-bar">
+      <button class="day-nav" id="memoDayPrevBtn" onclick="changeMemoDay(-1)" aria-label="이전 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <div class="day-label-wrap">
+        <div class="day-label" id="memoDayLabel">오늘</div>
+        <div class="day-date" id="memoDayDate"></div>
       </div>
-      <!-- Tweet detail header -->
-      <div id="twViewDetail" class="tw-header-inner hidden">
-        <button class="tw-back-btn" onclick="closeTweetDetail()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <span class="tw-header-title">게시물</span>
-      </div>
-      <!-- Bookmark header -->
-      <div id="twViewBookmark" class="tw-header-inner hidden">
-        <button class="tw-back-btn" onclick="closeMemoBookmarks()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <span class="tw-header-title">북마크</span>
-      </div>
+      <button class="day-nav" id="memoDayNextBtn" onclick="changeMemoDay(1)" aria-label="다음 날">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <button class="today-jump" id="memoTodayJumpBtn" onclick="jumpMemoToday()">오늘로</button>
     </div>
-
-    <!-- Timeline view -->
-    <div id="twTimeline" class="tw-feed"></div>
-
-    <!-- Tweet detail view -->
-    <div id="twDetail" class="tw-feed hidden"></div>
-
-    <!-- Bookmark view -->
-    <div id="twBookmarkFeed" class="tw-feed hidden"></div>
-
-    <!-- Floating compose button -->
-    <button class="tw-compose-fab" onclick="openMemoCompose(null)" aria-label="새 게시물 작성">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-    </button>
-  </div>
-
-  <!-- ============ MEMO COMPOSE POPUP ============ -->
-  <div class="overlay hidden" id="memoComposeOverlay" onclick="overlayClose(event,'memoComposeOverlay')">
-    <div class="tw-compose-sheet">
-      <div class="tw-compose-top">
-        <button class="tw-compose-cancel" onclick="closeOverlay('memoComposeOverlay')">취소</button>
-        <button class="tw-compose-post-btn" onclick="submitMemoCompose()" id="memoComposePostBtn">게시</button>
-      </div>
-      <div class="tw-compose-body">
-        <div class="tw-compose-reply-hint hidden" id="memoComposeReplyHint"></div>
-        <textarea id="memoComposeInput" class="tw-compose-textarea" placeholder="무슨 일이 있었나요?" rows="5"></textarea>
-        <div class="tw-compose-charcount" id="memoComposeCharCount">0 / 280</div>
-      </div>
+    <div id="memoList" class="memo-list"></div>
+    <div class="memo-input-bar">
+      <textarea id="memoInput" class="memo-input" placeholder="메모 입력..." rows="1" oninput="autoGrowMemoInput(this)"></textarea>
+      <button class="memo-send-btn" onclick="sendMemo()" aria-label="전송">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
     </div>
   </div>
 
@@ -239,6 +188,9 @@
       <label>시간대</label>
       <div class="seg-group" id="bfTimeGroup">
         <button class="seg-btn" data-val="none" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">미지정</button>
+        <button class="seg-btn" data-val="morning" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">오전</button>
+        <button class="seg-btn" data-val="afternoon" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">오후</button>
+        <button class="seg-btn" data-val="night" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">밤</button>
         <button class="seg-btn" data-val="custom" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">시간 지정</button>
         <button class="seg-btn" data-val="split" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">쪼개기</button>
       </div>
@@ -276,20 +228,20 @@
       <input type="number" id="bfCurrent" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
     </div>
 
-    <div class="field hidden" id="bfRoutineIntervalField">
-      <label>반복 주기</label>
-      <div class="routine-interval-row">
-        <span class="routine-interval-prefix">매</span>
-        <input type="number" id="bfRoutineInterval" min="1" max="365" value="1" inputmode="numeric" class="routine-interval-input">
-        <span class="routine-interval-suffix">일마다</span>
-      </div>
-    </div>
-
     <div class="field" id="bfCarryoverField">
       <label class="carryover-label">
         <input type="checkbox" id="bfCarryover">
         <span>이행</span>
       </label>
+    </div>
+
+    <div class="field hidden" id="bfIntervalField">
+      <label>반복 주기</label>
+      <div class="split-total-row">
+        <span class="split-label-text">매</span>
+        <input type="number" id="bfIntervalDays" value="1" min="1" max="365" inputmode="numeric" style="width:80px;">
+        <span class="split-label-text">일마다</span>
+      </div>
     </div>
 
     <div class="sheet-actions">
@@ -365,13 +317,14 @@
 
     <div class="field">
       <label>진행도 (%)</label>
-      <div class="progress-input-row">
-        <input type="number" id="wfProgress" placeholder="예: 0" min="0" max="100" inputmode="numeric" oninput="onWfProgressInput()">
-        <label class="complete-check-label">
-          <input type="checkbox" id="wfComplete" onchange="onWfCompleteChange()">
-          <span>완료</span>
-        </label>
-      </div>
+      <input type="number" id="wfProgress" placeholder="예: 0" min="0" max="100" inputmode="numeric">
+    </div>
+
+    <div class="field" id="wfPlannedField">
+      <label class="carryover-label">
+        <input type="checkbox" id="wfPlanned">
+        <span>예정</span>
+      </label>
     </div>
 
     <div class="field" id="wfArchiveField">
@@ -623,15 +576,16 @@
       백업 불러오기 (가져오기)
     </button>
     <input type="file" id="importFile" accept="application/json" class="hidden" onchange="importBackup(event)">
-    <h2 style="margin-top:20px;">가중치 설정</h2>
-    <div class="weight-row"><span>일정</span><input type="number" id="wSchedule" min="0" max="100"></div>
-    <div class="weight-row"><span>할일</span><input type="number" id="wTodo" min="0" max="100"></div>
-    <div class="weight-row"><span>일회성</span><input type="number" id="wOnce" min="0" max="100"></div>
-    <div class="weight-row"><span>여가</span><input type="number" id="wLeisure" min="0" max="100"></div>
-    <div class="weight-row"><span>루틴</span><input type="number" id="wRoutine" min="0" max="100"></div>
-    <div class="weight-row"><span>집중시간</span><input type="number" id="wFocus" min="0" max="100"></div>
-    <div class="weight-row"><span>감상</span><input type="number" id="wWatch" min="0" max="100"></div>
-    <div class="weight-row"><span>미지정</span><input type="number" id="wUnspecified" min="0" max="100"></div>
+    <h2 style="margin-top:20px;">점수 설정 (절댓값)</h2>
+    <p style="font-size:12.5px;color:#888;margin:-4px 0 10px;">유형별로 완료 시 받는 점수예요. 카운터형은 진행 비율만큼 부분 점수가 쌓여요.</p>
+    <div class="weight-row"><span>일정</span><input type="number" id="wSchedule" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>할일</span><input type="number" id="wTodo" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>일회성</span><input type="number" id="wOnce" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>여가</span><input type="number" id="wLeisure" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>루틴</span><input type="number" id="wRoutine" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>집중시간</span><input type="number" id="wFocus" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>감상</span><input type="number" id="wWatch" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>미지정</span><input type="number" id="wUnspecified" min="0" max="999" step="0.5"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('menuOverlay')">닫기</button>
       <button class="btn-save" onclick="saveMenuSettings()">저장</button>
@@ -649,55 +603,6 @@
     <div id="feedbackBody" class="feedback-body">불러오는 중...</div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('feedbackOverlay')">닫기</button>
-    </div>
-  </div>
-</div>
-
-
-<!-- ============ LIST BLOCK TITLE FORM ============ -->
-<div class="overlay" id="listBlockOverlay" onclick="overlayClose(event,'listBlockOverlay')">
-  <div class="sheet">
-    <div class="sheet-handle"></div>
-    <h2 id="listBlockSheetTitle">목록 추가</h2>
-    <div class="form-field">
-      <label class="field-label">목록 제목</label>
-      <input type="text" id="listBlockTitle" class="text-input" placeholder="예) 읽을 책, 할 게임...">
-    </div>
-    <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('listBlockOverlay')">취소</button>
-      <button class="btn-primary" onclick="submitListBlock()">저장</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============ LIST ITEM ADD FORM ============ -->
-<div class="overlay" id="listItemOverlay" onclick="overlayClose(event,'listItemOverlay')">
-  <div class="sheet">
-    <div class="sheet-handle"></div>
-    <h2>항목 추가</h2>
-    <div class="form-field">
-      <label class="field-label">제목</label>
-      <input type="text" id="listItemTitle" class="text-input" placeholder="항목 이름">
-    </div>
-    <div class="form-field">
-      <label class="field-label">설명 (선택)</label>
-      <input type="text" id="listItemDesc" class="text-input" placeholder="간단한 설명">
-    </div>
-    <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('listItemOverlay')">취소</button>
-      <button class="btn-primary" onclick="submitListItem()">추가</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============ LIST VIEW POPUP (전체 보기) ============ -->
-<div class="overlay" id="listViewOverlay" onclick="overlayClose(event,'listViewOverlay')">
-  <div class="sheet list-view-sheet">
-    <div class="sheet-handle"></div>
-    <h2 id="listViewTitle"></h2>
-    <div id="listViewContent" class="list-view-content"></div>
-    <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('listViewOverlay')">닫기</button>
     </div>
   </div>
 </div>

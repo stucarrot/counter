@@ -5,7 +5,12 @@
        total?, current?, done?, carryover, carryoverId?, sessions? }
      watchBlock (감상): { id, name, author, type(book/movie/etc), progress(0~100),
        archived: bool, watchChainId: string, memos: [{id,text,time}] }
-   pc_weights     : { schedule, todo, once, leisure, routine, focus, watch }
+   pc_weights     : { schedule, todo, once, leisure, routine, focus, watch, unspecified, focusGoalMinutes }
+     (이름은 "weights"지만 실제로는 블록 타입별 "절댓값 점수"다. 가중평균이 아니라
+      블록별 점수를 그냥 다 더하는 방식 — 하루 총점은 100점 캡이 없는 무제한 누적.
+      완료된 블록은 절댓값 전체, 카운터형은 (진행 비율 × 절댓값)의 부분 점수를 준다.
+      집중시간/감상도 동일하게 절댓값 적용: 집중시간은 목표 달성 비율 × 절댓값,
+      감상은 그날 진행도 변화분 비율 × 절댓값.)
    pc_carryover_meta  : { <carryoverId>: { stopped: bool } }   // 할일 이행/루틴 체인
    pc_watch_chain_meta: { <watchChainId>: { stopped: bool } }  // 감상 이월 체인
    pc_memos       : { "2026-06-17": [{id, text, time}], ... }  // 메모 탭
@@ -25,7 +30,10 @@
      (오늘 날짜는 아직 "마감"되지 않았으므로 여기 기록되지 않고, 오전 4시 컷오프를
      지나야 비로소 합산 대상이 된다.)
 
-   유형 "루틴"은 carryover가 항상 true로 강제된다 (매일 자동 반복, 진행도 리셋).
+   유형 "루틴"은 carryover가 항상 true로 강제된다 (기본은 매일 자동 반복, 진행도 리셋).
+   루틴은 intervalDays(기본 1)로 "매 n일마다" 반복 주기를 가질 수 있다 — 체인이
+   시작된 날(routineAnchorKey)을 기준으로 n일 간격에 해당하는 날에만 오늘 목록에
+   자동으로 나타나고, 그 사이 날에는 나타나지 않는다(히트맵에는 빈 칸으로 표시).
    다른 유형은 "이행" 체크박스로 carryover를 켤 수 있다 — 완료 전까지 진행도를
    그대로 들고 다음 날로 이어지고, 완료되면 체인이 멈춘다.
 
@@ -33,6 +41,9 @@
    이월된다 (이전 날 블록은 삭제되지 않고 그대로 남되, 새 날의 카드에는 그날
    변화한 진행도 %p가 함께 표시된다). progress가 100이 되면 그 날에 고정되어
    더 이상 이월되지 않는다.
+   "예정"(planned: bool)이 체크된 감상 블록은 아직 시작 전이라는 의미로 목록
+   맨 아래에 희미하게 표시된다. "보관"이 체크된 블록도 마찬가지로 희미하게
+   표시된다 (둘 다 정렬 순서상 완료/보관/예정이 일반 항목보다 뒤로 간다).
 
    "오늘"의 기준은 자정이 아니라 오전 4시.
    ========================================================= */
@@ -41,7 +52,7 @@ const DAY_CUTOFF_HOUR = 4;
 const HEATMAP_DAYS = 5;
 
 let days = JSON.parse(localStorage.getItem('pc_days') || '{}');
-let weights = JSON.parse(localStorage.getItem('pc_weights') || 'null') || { schedule: 22, todo: 19, once: 13, leisure: 10, routine: 19, focus: 13, watch: 5 };
+let weights = JSON.parse(localStorage.getItem('pc_weights') || 'null') || { schedule: 10, todo: 8, once: 6, leisure: 5, routine: 8, focus: 6, watch: 3 };
 let carryoverMeta = JSON.parse(localStorage.getItem('pc_carryover_meta') || '{}');
 let watchChainMeta = JSON.parse(localStorage.getItem('pc_watch_chain_meta') || '{}');
 let memos = JSON.parse(localStorage.getItem('pc_memos') || '{}');
@@ -51,7 +62,6 @@ let gameAddedScores = JSON.parse(localStorage.getItem('pc_game_added_scores') ||
 let gameSpendLog = JSON.parse(localStorage.getItem('pc_game_spend_log') || '[]');
 let planBlocks = JSON.parse(localStorage.getItem('pc_plan_blocks') || '[]');
 let periodPlans = JSON.parse(localStorage.getItem('pc_period_plans') || '[]');
-let listBlocks  = JSON.parse(localStorage.getItem('pc_list_blocks')  || '[]');
 
 let editBlockId = null;
 let deleteBlockId = null;
@@ -101,7 +111,6 @@ function saveWatchChainMeta() { localStorage.setItem('pc_watch_chain_meta', JSON
 function saveMemos() { localStorage.setItem('pc_memos', JSON.stringify(memos)); }
 function savePlanBlocks() { localStorage.setItem('pc_plan_blocks', JSON.stringify(planBlocks)); }
 function savePeriodPlans() { localStorage.setItem('pc_period_plans', JSON.stringify(periodPlans)); }
-function saveListBlocks()  { localStorage.setItem('pc_list_blocks',  JSON.stringify(listBlocks));  }
 function saveActiveTimer() {
   if (activeTimer) localStorage.setItem('pc_active_timer', JSON.stringify(activeTimer));
   else localStorage.removeItem('pc_active_timer');
@@ -153,7 +162,6 @@ function switchTab(tab) {
   document.getElementById('reorderToggle').style.display = (tab === 'todo' || tab === 'watch' || tab === 'plan') ? '' : 'none';
   if (reordering && tab !== 'todo' && tab !== 'watch' && tab !== 'plan') toggleReorder();
   if (tab === 'memo') {
-    setTwView('timeline');
     renderMemoHeader();
     renderMemos();
   } else if (tab === 'watch') {
@@ -181,37 +189,12 @@ function toggleReorder() {
 /* =========================================================
    GENERIC OVERLAY HELPERS
    ========================================================= */
-/* ===== Dark mode ===== */
-(function() {
-  const saved = localStorage.getItem('pc_dark_mode');
-  if (saved === '1') document.body.classList.add('dark');
-})();
-
-function toggleDarkMode() {
-  const isDark = document.body.classList.toggle('dark');
-  localStorage.setItem('pc_dark_mode', isDark ? '1' : '0');
-}
-
-/* ===== Watch form: complete checkbox ===== */
-function onWfCompleteChange() {
-  const cb = document.getElementById('wfComplete');
-  const inp = document.getElementById('wfProgress');
-  if (cb.checked) inp.value = 100;
-}
-
-function onWfProgressInput() {
-  const inp = document.getElementById('wfProgress');
-  const cb  = document.getElementById('wfComplete');
-  cb.checked = (parseInt(inp.value, 10) === 100);
-}
-
-function openOverlay(id) { document.getElementById(id).classList.add('open'); }
 function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
 function overlayClose(e, id) { if (e.target === document.getElementById(id)) closeOverlay(id); }
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay','listBlockOverlay','listItemOverlay','listViewOverlay'].forEach(closeOverlay);
+    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay'].forEach(closeOverlay);
   }
 });
 
@@ -266,13 +249,15 @@ function selectSeg(groupId, btn) {
 function onTypeChanged() {
   const carryoverField = document.getElementById('bfCarryoverField');
   const checkbox = document.getElementById('bfCarryover');
-  document.getElementById('bfRoutineIntervalField').classList.toggle('hidden', selectedType !== 'routine');
+  const intervalField = document.getElementById('bfIntervalField');
   if (selectedType === 'routine') {
     // 루틴은 항상 이행(carryover) — 체크박스를 숨기고 강제로 켠 상태로 취급
     carryoverField.classList.add('hidden');
     checkbox.checked = true;
+    intervalField.classList.remove('hidden');
   } else {
     carryoverField.classList.remove('hidden');
+    intervalField.classList.add('hidden');
   }
 }
 
@@ -346,8 +331,8 @@ function openBlockAdd() {
   document.getElementById('bfSplitFields').classList.add('hidden');
   document.getElementById('bfCarryover').checked = false;
   document.getElementById('bfCarryoverField').classList.remove('hidden');
-  document.getElementById('bfRoutineInterval').value = '1';
-  document.getElementById('bfRoutineIntervalField').classList.add('hidden');
+  document.getElementById('bfIntervalDays').value = '1';
+  document.getElementById('bfIntervalField').classList.add('hidden');
   selectedType = null; selectedTime = 'none'; selectedProgress = null;
   splitDates = [];
   renderSplitDateRows();
@@ -407,13 +392,13 @@ function openBlockEdit(id) {
   }
 
   document.getElementById('bfCarryover').checked = !!b.carryover;
-  document.getElementById('bfRoutineInterval').value = b.routineInterval || 1;
   if (b.type === 'routine') {
     document.getElementById('bfCarryoverField').classList.add('hidden');
-    document.getElementById('bfRoutineIntervalField').classList.remove('hidden');
+    document.getElementById('bfIntervalField').classList.remove('hidden');
+    document.getElementById('bfIntervalDays').value = b.intervalDays || 1;
   } else {
     document.getElementById('bfCarryoverField').classList.remove('hidden');
-    document.getElementById('bfRoutineIntervalField').classList.add('hidden');
+    document.getElementById('bfIntervalField').classList.add('hidden');
   }
 
   document.getElementById('blockFormOverlay').classList.add('open');
@@ -448,6 +433,7 @@ function submitBlockForm() {
 
   const isRoutineType = selectedType === 'routine';
   const wantsCarryover = isRoutineType || isSplit || document.getElementById('bfCarryover').checked;
+  const intervalDays = isRoutineType ? Math.max(1, parseInt(document.getElementById('bfIntervalDays').value) || 1) : null;
 
   const day = ensureDay(viewingDateKey);
 
@@ -458,28 +444,33 @@ function submitBlockForm() {
       b.progressType = selectedProgress;
       // 루틴 ↔ 비루틴 전환은 막는다 (openBlockEdit에서 버튼 disabled 처리됨)
       b.type = b.type === 'routine' ? 'routine' : selectedType;
-      if (b.type === 'routine') {
-        const iv = parseInt(document.getElementById('bfRoutineInterval').value) || 1;
-        b.routineInterval = iv > 1 ? iv : undefined;
-      }
 
       if (selectedProgress === 'counter') { b.total = total; b.current = current; }
       else if (selectedProgress === 'toggle') { if (b.done === undefined) b.done = false; }
       if (isSplit) b.splitDates = savedSplitDates; else delete b.splitDates;
 
+      if (b.type === 'routine') {
+        b.intervalDays = intervalDays;
+        if (!b.routineAnchorKey) b.routineAnchorKey = viewingDateKey; // 기존 루틴에 처음 주기를 설정하는 경우 오늘을 기준일로
+      } else {
+        delete b.intervalDays; delete b.routineAnchorKey;
+      }
+
       applyCarryoverFlag(b, wantsCarryover);
     }
   } else {
-    const routineInterval = selectedType === 'routine' ? (parseInt(document.getElementById('bfRoutineInterval').value) || 1) : undefined;
     const block = {
       id: Date.now() + Math.floor(Math.random()*1000),
       name, desc, type: selectedType, time: selectedTime, customTime,
-      progressType: selectedProgress, sessions: [],
-      ...(routineInterval > 1 ? { routineInterval } : {})
+      progressType: selectedProgress, sessions: []
     };
     if (selectedProgress === 'counter') { block.total = total; block.current = current; }
     if (selectedProgress === 'toggle') { block.done = false; }
     if (isSplit) block.splitDates = savedSplitDates;
+    if (isRoutineType) {
+      block.intervalDays = intervalDays;
+      block.routineAnchorKey = viewingDateKey; // 이 블록이 처음 생성된 날을 주기의 기준일로 삼음
+    }
     applyCarryoverFlag(block, wantsCarryover);
     day.blocks.push(block);
   }
@@ -565,13 +556,13 @@ function blockProgressFraction(b) {
   return null;
 }
 
-// 초과달성 시 추가 점수 (가중치만 적용, 100점 풀에 포함 안 됨)
+// 초과달성 시 추가 점수 (절댓값 점수에 초과 비율을 곱한 보너스, 기본 점수에 추가로 더해짐)
 function blockOverAchieveBonus(b) {
   if (b.progressType !== 'counter') return 0;
   if (b.current <= b.total || b.total <= 0) return 0;
   const overFrac = (b.current - b.total) / b.total; // 초과 비율
-  const w = weights[b.type] ?? 25;
-  return overFrac * w; // 가중치 비례 보너스 (점수 단위는 raw weightedSum과 동일)
+  const w = weights[b.type] ?? 5;
+  return overFrac * w; // 절댓값 점수에 비례한 보너스
 }
 
 // 이행 블록에서 특정 날짜의 "그 날만의 진행도"를 계산.
@@ -600,6 +591,19 @@ function isBlockComplete(b) {
   if (b.progressType === 'counter') return b.current >= b.total;
   if (b.progressType === 'toggle') return !!b.done;
   return false;
+}
+
+// 루틴 블록이 주어진 날짜(dayKey)에 "활성화되는 날"인지 판정.
+// anchorKey로부터 며칠 지났는지를 intervalDays로 나눈 나머지가 0이면 활성 날.
+// intervalDays가 1(기본, 매일) 또는 anchorKey가 없으면 항상 true.
+function isRoutineDueOn(template, dayKey) {
+  const interval = template.intervalDays || 1;
+  if (interval <= 1 || !template.routineAnchorKey) return true;
+  const anchorDate = keyToDate(template.routineAnchorKey);
+  const targetDate = keyToDate(dayKey);
+  const diffDays = Math.round((targetDate - anchorDate) / 86400000);
+  if (diffDays < 0) return false; // 기준일보다 이전 날짜는 해당 없음
+  return diffDays % interval === 0;
 }
 
 /* =========================================================
@@ -639,18 +643,13 @@ function syncCarryoversForToday() {
       return;
     }
 
-    // n일마다 루틴: 마지막으로 나타난 날로부터 n일이 지나지 않았으면 오늘에 추가하지 않음
-    if (template.type === 'routine' && template.routineInterval > 1 && templateKey) {
-      const daysSince = Math.round(
-        (keyToDate(todayKey) - keyToDate(templateKey)) / (1000 * 60 * 60 * 24)
-      );
-      if (daysSince < template.routineInterval) return;
-    }
+    // "매 n일마다" 루틴이고 오늘이 주기 날이 아니면 오늘 목록에 추가하지 않고 건너뜀 (쉬는 날)
+    if (template.type === 'routine' && !isRoutineDueOn(template, todayKey)) return;
 
     // 미완료 → 그날까지의 진행도를 그대로 들고 오늘로 복사 (루틴은 진행도 리셋, 이행은 유지)
     const nb = { ...template, id: Date.now() + Math.floor(Math.random()*100000) };
     if (template.type === 'routine') {
-      // 루틴은 매일 새로 시작하는 반복 — 진행도 리셋
+      // 루틴은 매일(또는 매 n일) 새로 시작하는 반복 — 진행도 리셋
       if (nb.progressType === 'counter') nb.current = 0;
       if (nb.progressType === 'toggle') nb.done = false;
     }
@@ -755,58 +754,14 @@ function renderBlocks() {
   // 위/아래 버튼은 실제 데이터 배열(day.blocks)의 인덱스를 그대로 사용해야 하므로,
   // 정렬은 표시용으로만 하고 원래 인덱스(realIdx)를 함께 들고 다닌다.
   const withIdx = day.blocks.map((b, realIdx) => ({ b, realIdx }));
-
-  // 블록의 시간 값을 분(0~1439)으로 변환. 시간 없음은 Infinity
-  function blockToMinutes(b) {
-    if (b.time === 'custom' && b.customTime) {
-      const [hh, mm] = b.customTime.split(':').map(Number);
-      return hh * 60 + (mm || 0);
-    }
-    if (b.time === 'split') return Infinity; // 쪼개기는 시간없음 구역으로
-    // morning/afternoon/night 레거시 데이터 호환
-    if (b.time === 'morning') return 0;
-    if (b.time === 'afternoon') return 12 * 60;
-    if (b.time === 'night') return 17 * 60;
-    return Infinity;
-  }
-
   const sorted = withIdx.slice().sort((x, y) => {
     const xDone = x.b.progressType !== 'none' && isBlockComplete(x.b) ? 1 : 0;
     const yDone = y.b.progressType !== 'none' && isBlockComplete(y.b) ? 1 : 0;
     if (xDone !== yDone) return xDone - yDone;
-    const xm = blockToMinutes(x.b), ym = blockToMinutes(y.b);
-    if (xm !== ym) return xm - ym;
-    return x.realIdx - y.realIdx;
+    return x.realIdx - y.realIdx; // 같은 그룹 내에서는 원래 순서 유지
   });
 
-  // 가로선 삽입을 위해 구역 경계 파악 (12:00 = 720분, 17:00 = 1020분)
-  const LUNCH_MIN = 12 * 60;
-  const EVENING_MIN = 17 * 60;
-
-  // 구역별 미완료 블록 존재 여부
-  function hasBlockInZone(minFrom, minTo) {
-    return sorted.some(({ b }) => {
-      if (b.progressType !== 'none' && isBlockComplete(b)) return false;
-      const m = blockToMinutes(b);
-      return m >= minFrom && m < minTo;
-    });
-  }
-  let lunchLineInserted = false, eveningLineInserted = false;
-
-  const cards = [];
-  sorted.forEach(({ b, realIdx }) => {
-    const bMin = blockToMinutes(b);
-    // 점심 가로선: 첫 오후 블록 직전
-    if (!lunchLineInserted && bMin >= LUNCH_MIN) {
-      cards.push('<div class="time-divider"><span>오후</span></div>');
-      lunchLineInserted = true;
-    }
-    // 저녁 가로선: 첫 저녁 블록 직전
-    if (!eveningLineInserted && bMin >= EVENING_MIN) {
-      cards.push('<div class="time-divider"><span>저녁</span></div>');
-      eveningLineInserted = true;
-    }
-
+  el.innerHTML = sorted.map(({ b, realIdx }) => {
     const idx = realIdx; // moveBlock 등에서 쓰는 실제 배열 인덱스
     const complete = isBlockComplete(b);
     let progressHtml = '';
@@ -852,9 +807,10 @@ function renderBlocks() {
     }
     const timeStr = timeLabelFor(b);
     const carryoverBadge = (b.carryover && b.type !== 'routine') ? `<span class="carryover-chip">이행</span>` : '';
+    const intervalBadge = (b.type === 'routine' && b.intervalDays > 1) ? `<span class="carryover-chip">매 ${b.intervalDays}일마다</span>` : '';
     const hasTime = blockTotalFocusMs(b) > 0 || (activeTimer && activeTimer.blockId === b.id);
     const isTimerActive = activeTimer && activeTimer.blockId === b.id && activeTimer.dateKey === viewingDateKey;
-    const cardHtml = `<div class="card block-card type-${b.type} ${complete && b.progressType!=='none' ? 'completed':''}" data-id="${b.id}">
+    return `<div class="card block-card type-${b.type} ${complete && b.progressType!=='none' ? 'completed':''}" data-id="${b.id}">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -862,7 +818,7 @@ function renderBlocks() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(b.name)}${isTimerActive ? ' ⏱' : ''}</div>
-            <div class="card-sub"><span class="type-chip">${TYPE_LABEL[b.type]}</span>${timeStr ? `<span class="time-chip">${timeStr}</span>` : ''}${carryoverBadge}</div>
+            <div class="card-sub"><span class="type-chip">${TYPE_LABEL[b.type]}</span>${timeStr ? `<span class="time-chip">${timeStr}</span>` : ''}${carryoverBadge}${intervalBadge}</div>
             ${b.type === 'routine' ? renderHeatmap(b.carryoverId) : ''}
           </div>
           <div class="card-btns">
@@ -886,10 +842,7 @@ function renderBlocks() {
         ${renderSessionLog(b)}
       </div>
     </div>`;
-    cards.push(cardHtml);
-  });
-
-  el.innerHTML = cards.join('');
+  }).join('');
 }
 
 /* =========================================================
@@ -918,7 +871,11 @@ function copyYesterday() {
 }
 
 /* =========================================================
-   SCORE CALCULATION (집중시간 가중치 포함)
+   SCORE CALCULATION (절댓값 합산 — 100점 캡 없음)
+   각 블록 타입의 weights[type] 값은 "절댓값 점수"다. 완료된 항목은 그 값 전체,
+   카운터형처럼 부분 진행이 있는 항목은 (진행 비율 × 절댓값)만큼 점수를 더한다.
+   집중시간/감상도 동일한 원리로 (달성 비율 × 절댓값) 점수를 더한다.
+   하루 총점은 모든 항목의 점수를 단순히 다 더한 값 — 100점 만점 캡이 없다.
    ========================================================= */
 const FOCUS_GOAL_MINUTES_DEFAULT = 120;
 function getFocusGoalMs() {
@@ -930,62 +887,74 @@ function dayTotalFocusMs(day) {
   return day.blocks.reduce((sum, b) => sum + blockTotalFocusMs(b), 0);
 }
 
-/* 절대 점수 시스템
-   일회성: 5점, 할일: 10점, 일정: 10점, 여가: 5점, 루틴: 5점 (완료 기준)
-   감상: 진행도 1%p당 0.1점 (최대 10점)
-   progressType === 'none' 블록은 점수 대상 아님
-*/
-const ABS_SCORE = { once: 5, todo: 10, schedule: 10, leisure: 5, routine: 5 };
+// 하루치 점수를 절댓값 합산 방식으로 계산.
+// fracFn(b) : 블록 b의 그날 진행 비율(0~1)을 반환하는 함수 — 오늘 화면용은 blockProgressFraction,
+//             특정 과거 날짜의 "그날만의 기여도"용은 blockDayFraction을 넘겨받아 사용한다.
+function computeDayScoreRaw(day, dayKey, fracFn) {
+  const scorable = day.blocks.filter(b => b.progressType !== 'none');
+  const totalFocusMs = dayTotalFocusMs(day);
+  const focusWeight = weights.focus ?? 0;
+  const hasFocusComponent = focusWeight > 0;
+  const watchWeight = weights.watch ?? 0;
+  const watchFrac = dayWatchScoreFraction(day);
+  const hasWatchComponent = watchWeight > 0 && watchFrac !== null;
 
-function blockAbsScore(b) {
-  if (b.type === 'watch') return 0; // 감상은 별도
-  const max = ABS_SCORE[b.type] ?? 5;
-  const frac = blockProgressFraction(b);
-  return max * Math.min(1, frac);
-}
+  if (!scorable.length && !hasFocusComponent && !hasWatchComponent) {
+    return { score: null, maxScore: 0, totalFocusMs, hasAny: false };
+  }
 
-function calcDayAbsScore(day) {
-  let total = 0;
-  (day.blocks || []).forEach(b => {
-    if (b.progressType === 'none') return;
-    total += blockAbsScore(b);
+  let score = 0, maxScore = 0;
+  scorable.forEach(b => {
+    const w = weights[b.type] ?? 5;
+    const frac = fracFn(b, dayKey);
+    score += w * (frac ?? 0);
+    maxScore += w;
   });
-  (day.watchBlocks || []).forEach(w => {
-    const prog = typeof w.progress === 'number' ? w.progress : 0;
-    total += prog * 0.1; // 1%p당 0.1점
-  });
-  return total;
+  if (hasFocusComponent) {
+    const focusFrac = Math.min(1, totalFocusMs / getFocusGoalMs());
+    score += focusWeight * focusFrac;
+    maxScore += focusWeight;
+  }
+  if (hasWatchComponent) {
+    score += watchWeight * watchFrac;
+    maxScore += watchWeight;
+  }
+  // 초과달성 보너스: 절댓값 점수에 비례해 추가로 더해짐 (maxScore에는 포함 안 됨)
+  let overBonus = 0;
+  scorable.forEach(b => { overBonus += blockOverAchieveBonus(b); });
+  score = Math.round((score + overBonus) * 10) / 10;
+  return { score, maxScore: Math.round(maxScore * 10) / 10, totalFocusMs, hasAny: true };
 }
 
 function renderScore() {
   const day = ensureDay(viewingDateKey);
   const el = document.getElementById('scoreCard');
-  const scorable = day.blocks.filter(b => b.progressType !== 'none');
-  const totalFocusMs = dayTotalFocusMs(day);
-  const hasWatch = (day.watchBlocks || []).length > 0;
+  const result = computeDayScoreRaw(day, viewingDateKey, blockProgressFraction);
 
-  if (!scorable.length && !hasWatch) {
+  if (!result.hasAny) {
     el.innerHTML = `<div class="score-top"><div class="score-num">—</div></div>
       <div class="score-feedback">진행 체크가 있는 블록을 추가하면 점수가 표시돼요.</div>
       <div class="score-bottom-row"><span></span>${renderFeedbackButton()}</div>`;
     return;
   }
 
-  const score = Math.round(calcDayAbsScore(day) * 10) / 10;
-  const scoreDisplay = Number.isInteger(score) ? score : score.toFixed(1);
+  const { score, maxScore, totalFocusMs } = result;
+  const focusWeight = weights.focus ?? 0;
+  const hasFocusComponent = focusWeight > 0;
+  // 진행 막대는 "오늘 다 채웠을 때의 기준 점수(maxScore)" 대비 현재 점수 비율로 표시
+  const barPct = maxScore > 0 ? Math.min(100, Math.round((score / maxScore) * 100)) : (score > 0 ? 100 : 0);
 
   let feedback;
-  if (score >= 30) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
-  else if (score >= 20) feedback = '꽤 잘 해내고 있어요. 남은 것도 마무리해봐요.';
-  else if (score >= 10) feedback = '절반 정도 진행됐어요. 천천히 이어가요.';
-  else if (score > 0) feedback = '이제 시작이에요. 하나씩 차근차근 해봐요.';
+  if (barPct >= 90) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
+  else if (barPct >= 70) feedback = '꽤 잘 해내고 있어요. 남은 것도 마무리해봐요.';
+  else if (barPct >= 40) feedback = '절반 정도 진행됐어요. 천천히 이어가요.';
+  else if (barPct > 0) feedback = '이제 시작이에요. 하나씩 차근차근 해봐요.';
   else feedback = '아직 시작 전이에요. 작은 것부터 시작해볼까요?';
 
-  const hasFocusComponent = (weights.focus ?? 0) > 0;
-
   el.innerHTML = `
-    <div class="score-top"><div class="score-num">${scoreDisplay}<span>pt</span></div></div>
+    <div class="score-top"><div class="score-num">${score}${maxScore > 0 ? `<span>/${maxScore}</span>` : ''}</div></div>
     <div class="score-feedback">${feedback}</div>
+    <div class="score-bar"><div class="score-bar-fill" style="width:${barPct}%"></div></div>
     <div class="score-bottom-row">
       ${hasFocusComponent ? `<span class="score-focus-row">집중 <strong>${formatDurationShort(totalFocusMs)}</strong></span>` : '<span></span>'}
       ${renderFeedbackButton()}
@@ -1224,7 +1193,6 @@ function switchPlanSubtab(sub) {
     document.getElementById(`planSubtab-${s}`).classList.toggle('active', sub === s);
   });
   document.getElementById('periodAddBtn').classList.toggle('hidden', sub !== 'period');
-  document.getElementById('listAddBtn').classList.toggle('hidden', sub !== 'period');
   document.getElementById('planAddBtn').classList.toggle('hidden', sub === 'period');
   if (reordering) toggleReorder(); // 서브탭을 바꾸면 순서모드는 헷갈리니 끈다
   renderPlanList();
@@ -1392,18 +1360,9 @@ function planTimeRangeLabel(p) {
 }
 
 // "시간순" 서브탭 정렬 기준 키 (날짜 없으면 맨 뒤로)
-const PLAN_TIME_SLOT_ORDER = { morning: '00', afternoon: '01', night: '02' };
 function planSortKey(p) {
   const datePart = p.dateStart || '9999-99-99';
-  // timeStart가 있으면 실제 시각 기준, 없으면 슬롯(morning/afternoon/night) 기준
-  let timePart;
-  if (p.timeStart) {
-    timePart = p.timeStart.substring(0, 5); // HH:MM
-  } else if (p.timeSlot && PLAN_TIME_SLOT_ORDER[p.timeSlot] !== undefined) {
-    timePart = PLAN_TIME_SLOT_ORDER[p.timeSlot];
-  } else {
-    timePart = '99:99';
-  }
+  const timePart = p.timeStart || '99:99';
   return `${datePart} ${timePart}`;
 }
 
@@ -1536,6 +1495,15 @@ function sendPlanToDate(mode) {
   };
   if (p.progressType === 'counter') { newBlock.total = p.total; newBlock.current = p.current; }
   if (p.progressType === 'toggle') { newBlock.done = p.done || false; }
+  if (newBlock.type === 'routine') {
+    // 루틴으로 보내지는 경우 매일(기본) 주기의 새 이월 체인을 시작한다
+    newBlock.intervalDays = 1;
+    newBlock.routineAnchorKey = targetKey;
+    newBlock.carryover = true;
+    newBlock.carryoverId = 'c' + Date.now() + Math.floor(Math.random()*1000);
+    carryoverMeta[newBlock.carryoverId] = { stopped: false };
+    saveCarryoverMeta();
+  }
   day.blocks.push(newBlock);
   saveDays();
 
@@ -1687,17 +1655,14 @@ function openRefPicker() {
 }
 
 function resolveRef(ref) {
+  // 참조가 가리키는 실제 블록을 찾아 반환. 없으면 null (삭제된 것으로 간주).
   if (ref.kind === 'plan') {
     const p = planBlocks.find(x => x.id === ref.id);
-    return p ? { name: p.name, meta: `계획 · ${TYPE_LABEL[p.type] || p.type}` } : null;
+    return p ? { name: p.name, meta: TYPE_LABEL[p.type] } : null;
   } else if (ref.kind === 'todo') {
     const dayObj = days[ref.dateKey];
     const b = dayObj && dayObj.blocks.find(x => x.id === ref.id);
-    return b ? { name: b.name, meta: `할일 · ${ref.dateKey}` } : null;
-  } else if (ref.kind === 'watch') {
-    const dayObj = days[ref.dateKey];
-    const w = dayObj && dayObj.watchBlocks && dayObj.watchBlocks.find(x => x.id === ref.id);
-    return w ? { name: w.name, meta: `감상 · ${w.progress ?? 0}%` } : null;
+    return b ? { name: b.name, meta: `${TYPE_LABEL[b.type]} · ${ref.dateKey}` } : null;
   }
   return null;
 }
@@ -1705,44 +1670,20 @@ function resolveRef(ref) {
 function renderRefPickerList() {
   const el = document.getElementById('refPickerList');
   const items = [];
-  const todayKey = TODAY_KEY();
 
-  // 계획 블록 (전체)
   planBlocks.forEach(p => {
-    items.push({ kind: 'plan', id: p.id, dateKey: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type] || p.type}` });
+    items.push({ kind: 'plan', id: p.id, dateKey: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type]}` });
   });
-
-  // 할일 블록: 날짜가 오늘 이후인 것만
-  Object.keys(days).sort().forEach(dateKey => {
-    if (dateKey < todayKey) return;
-    const dayObj = days[dateKey];
-    if (!dayObj || !dayObj.blocks) return;
-    dayObj.blocks.forEach(b => {
-      items.push({ kind: 'todo', id: b.id, dateKey, name: b.name, meta: `할일 · ${dateKey}` });
-    });
-  });
-
-  // 감상 블록: 보관 상태 아니고 진행도 100% 미만인 것
-  Object.keys(days).sort().forEach(dateKey => {
-    const dayObj = days[dateKey];
-    if (!dayObj || !dayObj.watchBlocks) return;
-    dayObj.watchBlocks.forEach(w => {
-      if (w.archived) return;
-      const prog = typeof w.progress === 'number' ? w.progress : 0;
-      if (prog >= 100) return;
-      items.push({ kind: 'watch', id: w.id, dateKey, name: w.name, meta: `감상 · ${prog}%` });
-    });
-  });
+  // 기간계획 참조는 계획 탭 블록만 허용
 
   if (!items.length) {
-    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 블록이 없어요</p></div>`;
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 계획 블록이 없어요</p></div>`;
     return;
   }
 
   el.innerHTML = items.map(item => {
     const isSelected = pendingPeriodRefs.some(r => r.kind === item.kind && r.id === item.id && r.dateKey === item.dateKey);
-    const dkArg = item.dateKey ? `'${item.dateKey}'` : 'null';
-    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},${dkArg})">
+    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},null)">
       <span>${esc(item.name)}</span>
       <span class="ref-picker-item-meta">${esc(item.meta)}</span>
     </div>`;
@@ -1791,168 +1732,17 @@ function updateRefDate(idx, field, value) {
   if (pendingPeriodRefs[idx]) pendingPeriodRefs[idx][field] = value;
 }
 
-/* =========================================================
-   LIST BLOCKS (목록)
-   ========================================================= */
-let editListId = null;
-let editListBlockId = null;
-
-function openListBlockAdd() {
-  editListId = null;
-  document.getElementById('listBlockTitle').value = '';
-  document.getElementById('listBlockOverlay').classList.add('open');
-  setTimeout(() => document.getElementById('listBlockTitle').focus(), 80);
-}
-
-function openListBlockEdit(id) {
-  const lb = listBlocks.find(x => x.id === id);
-  if (!lb) return;
-  editListId = id;
-  document.getElementById('listBlockTitle').value = lb.title;
-  document.getElementById('listBlockOverlay').classList.add('open');
-}
-
-function submitListBlock() {
-  const title = document.getElementById('listBlockTitle').value.trim();
-  if (!title) { showToast('제목을 입력해주세요'); return; }
-  if (editListId) {
-    const lb = listBlocks.find(x => x.id === editListId);
-    if (lb) lb.title = title;
-  } else {
-    listBlocks.push({ id: Date.now(), title, items: [] });
-  }
-  saveListBlocks();
-  closeOverlay('listBlockOverlay');
-  renderPlanList();
-}
-
-function openListItemAdd(listId) {
-  editListBlockId = listId;
-  document.getElementById('listItemTitle').value = '';
-  document.getElementById('listItemDesc').value = '';
-  document.getElementById('listItemOverlay').classList.add('open');
-  setTimeout(() => document.getElementById('listItemTitle').focus(), 80);
-}
-
-function submitListItem() {
-  const title = document.getElementById('listItemTitle').value.trim();
-  const desc  = document.getElementById('listItemDesc').value.trim();
-  if (!title) { showToast('제목을 입력해주세요'); return; }
-  const lb = listBlocks.find(x => x.id === editListBlockId);
-  if (!lb) return;
-  lb.items.push({ id: Date.now(), title, desc, checked: false });
-  saveListBlocks();
-  closeOverlay('listItemOverlay');
-  renderPlanList();
-}
-
-function toggleListItem(listId, itemId) {
-  const lb = listBlocks.find(x => x.id === listId);
-  if (!lb) return;
-  const item = lb.items.find(x => x.id === itemId);
-  if (item) item.checked = !item.checked;
-  saveListBlocks();
-  renderPlanList();
-}
-
-function deleteListBlock(id) {
-  listBlocks = listBlocks.filter(x => x.id !== id);
-  saveListBlocks();
-  renderPlanList();
-}
-
-function openListViewPopup(listId) {
-  const lb = listBlocks.find(x => x.id === listId);
-  if (!lb) return;
-  const el = document.getElementById('listViewContent');
-  el.innerHTML = lb.items.length
-    ? lb.items.map(item => `
-      <div class="list-view-item" onclick="toggleListItem(${listId},${item.id});openListViewPopup(${listId})">
-        <input type="checkbox" class="list-cb" ${item.checked ? 'checked' : ''} onclick="event.stopPropagation();toggleListItem(${listId},${item.id});openListViewPopup(${listId})">
-        <div class="list-view-item-body">
-          <span class="list-item-title${item.checked?' checked':''}">${esc(item.title)}</span>
-          ${item.desc ? `<span class="list-item-desc">${esc(item.desc)}</span>` : ''}
-        </div>
-      </div>`).join('')
-    : `<div style="color:var(--gray-400);text-align:center;padding:20px">항목이 없어요</div>`;
-  document.getElementById('listViewTitle').textContent = lb.title;
-  document.getElementById('listViewOverlay').classList.add('open');
-}
-
-function renderListBlocks(el) {
-  const html = listBlocks.map(lb => {
-    const items = lb.items || [];
-    const preview = items.slice(0, 5);
-    const hasMore = items.length > 5;
-    const previewHtml = preview.map(item => `
-      <div class="list-preview-item" onclick="event.stopPropagation();toggleListItem(${lb.id},${item.id})">
-        <input type="checkbox" class="list-cb" ${item.checked ? 'checked' : ''} onclick="event.stopPropagation();toggleListItem(${lb.id},${item.id})">
-        <span class="list-item-title${item.checked?' checked':''}">${esc(item.title)}</span>
-      </div>`).join('');
-    return `<div class="card list-block-card">
-      <div class="card-header">
-        <div class="card-title-wrap">
-          <div class="card-title">${esc(lb.title)}</div>
-          <div class="list-count-label">${items.length}개 항목 · ${items.filter(i=>i.checked).length}개 완료</div>
-        </div>
-        <div class="card-btns">
-          <button class="icon-btn" onclick="openListViewPopup(${lb.id})" aria-label="보기" title="전체 보기">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-          <button class="icon-btn" onclick="openListBlockEdit(${lb.id})" aria-label="수정" title="수정">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          <button class="icon-btn" onclick="openListItemAdd(${lb.id})" aria-label="항목 추가" title="항목 추가">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
-          <button class="icon-btn" onclick="deleteListBlock(${lb.id})" aria-label="삭제" title="삭제">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-          </button>
-        </div>
-      </div>
-      ${previewHtml ? `<div class="list-preview">${previewHtml}${hasMore ? `<div class="list-more-hint" onclick="openListViewPopup(${lb.id})">···  더보기 (${items.length - 5}개)</div>` : ''}</div>` : ''}
-    </div>`;
-  }).join('');
-  el.innerHTML = html || `<div class="empty"><p>목록을 추가해보세요</p></div>`;
-}
-
-/* =========================================================
-   PERIOD PLAN (기간)
-   ========================================================= */
-
 function renderPeriodList(el) {
-  // 목록 블록 먼저 렌더링
-  const listSection = document.createElement('div');
-  renderListBlocks(listSection);
-  el.innerHTML = '';
-  if (listBlocks.length) {
-    const header = document.createElement('div');
-    header.className = 'period-section-header';
-    header.textContent = '목록';
-    el.appendChild(header);
-    el.appendChild(listSection);
-  } else {
-    el.appendChild(listSection);
-  }
-
   const list = periodPlans.slice().sort((a, b) => (a.dateStart || '').localeCompare(b.dateStart || ''));
-  if (!list.length && !listBlocks.length) {
+  if (!list.length) {
     el.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
-      <p>기간/목록을 추가해보세요</p>
+      <p>기간계획을 추가해보세요</p>
     </div>`;
     return;
   }
-  if (!list.length) return;
-  // 기간계획 섹션 헤더
-  if (list.length) {
-    const pHeader = document.createElement('div');
-    pHeader.className = 'period-section-header';
-    pHeader.textContent = '기간';
-    el.appendChild(pHeader);
-  }
-  const periodSection = document.createElement('div');
-  periodSection.innerHTML = list.map(pp => {
+  el.innerHTML = list.map(pp => {
+    // refs를 날짜순으로 정렬: 날짜 미지정 → 맨 앞, 날짜 지정 → 날짜순, 날짜 같으면 날짜(단일) > 날짜범위
     const sortedRefs = (pp.refs || []).slice().sort((a, b) => {
       const aDate = a.refDate || '';
       const bDate = b.refDate || '';
@@ -1993,7 +1783,6 @@ function renderPeriodList(el) {
       ${refsHtml ? `<div class="period-ref-list">${refsHtml}</div>` : ''}
     </div>`;
   }).join('');
-  el.appendChild(periodSection);
 }
 
 /* =========================================================
@@ -2029,8 +1818,8 @@ function openWatchAdd() {
   document.getElementById('wfName').value = '';
   document.getElementById('wfAuthor').value = '';
   document.getElementById('wfProgress').value = '0';
-  document.getElementById('wfComplete').checked = false;
   document.getElementById('wfArchive').checked = false;
+  document.getElementById('wfPlanned').checked = false;
   selectedWatchType = null;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('watchFormOverlay').classList.add('open');
@@ -2046,8 +1835,8 @@ function openWatchEdit(id) {
   document.getElementById('wfName').value = w.name;
   document.getElementById('wfAuthor').value = w.author || '';
   document.getElementById('wfProgress').value = w.progress;
-  document.getElementById('wfComplete').checked = (parseInt(w.progress) === 100);
   document.getElementById('wfArchive').checked = !!w.archived;
+  document.getElementById('wfPlanned').checked = !!w.planned;
   selectedWatchType = w.type;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === w.type));
   document.getElementById('watchFormOverlay').classList.add('open');
@@ -2059,6 +1848,7 @@ function submitWatchForm() {
   const author = document.getElementById('wfAuthor').value.trim();
   let progress = parseInt(document.getElementById('wfProgress').value);
   const archived = document.getElementById('wfArchive').checked;
+  const planned = document.getElementById('wfPlanned').checked;
   if (!name) { document.getElementById('wfName').focus(); return; }
   if (!selectedWatchType) { showToast('유형을 선택해주세요'); return; }
   if (isNaN(progress)) progress = 0;
@@ -2070,7 +1860,7 @@ function submitWatchForm() {
     const w = day.watchBlocks.find(x => x.id === editWatchId);
     if (w) {
       w.name = name; w.author = author; w.type = selectedWatchType;
-      w.progress = progress; w.archived = archived;
+      w.progress = progress; w.archived = archived; w.planned = planned;
       // 100% 달성 시 더 이상 이월되지 않도록 체인 중단 처리
       if (progress >= 100 && w.watchChainId) {
         watchChainMeta[w.watchChainId] = { stopped: true };
@@ -2081,7 +1871,7 @@ function submitWatchForm() {
     const chainId = 'w' + Date.now() + Math.floor(Math.random()*1000);
     const watchBlock = {
       id: Date.now() + Math.floor(Math.random()*1000),
-      name, author, type: selectedWatchType, progress, archived,
+      name, author, type: selectedWatchType, progress, archived, planned,
       watchChainId: chainId, memos: []
     };
     watchChainMeta[chainId] = { stopped: progress >= 100 || archived };
@@ -2159,6 +1949,14 @@ function toggleWatchArchive(id) {
   saveDays(); renderWatchBlocks(); renderScore();
 }
 
+function toggleWatchPlanned(id) {
+  const day = ensureDay(viewingWatchDateKey);
+  const w = day.watchBlocks.find(x => x.id === id);
+  if (!w) return;
+  w.planned = !w.planned;
+  saveDays(); renderWatchBlocks(); renderScore();
+}
+
 // 전날 같은 체인의 블록을 찾아 오늘 대비 변화량(%p)을 계산. 없으면 null.
 function watchDeltaForToday(w, dateKey) {
   if (!w.watchChainId) return null;
@@ -2183,19 +1981,21 @@ function renderWatchBlocks() {
 
   const withIdx = day.watchBlocks.map((w, realIdx) => ({ w, realIdx }));
   const sorted = withIdx.slice().sort((x, y) => {
-    const xDone = x.w.progress >= 100 ? 1 : 0;
-    const yDone = y.w.progress >= 100 ? 1 : 0;
-    if (xDone !== yDone) return xDone - yDone;
+    // 정렬 그룹: 0 = 진행 중(일반), 1 = 완료(100%), 2 = 예정 또는 보관(희미하게 맨 아래)
+    const groupOf = (w) => (w.planned || w.archived) ? 2 : (w.progress >= 100 ? 1 : 0);
+    const xGroup = groupOf(x.w), yGroup = groupOf(y.w);
+    if (xGroup !== yGroup) return xGroup - yGroup;
     return x.realIdx - y.realIdx;
   });
 
   el.innerHTML = sorted.map(({ w, realIdx }) => {
     const idx = realIdx;
     const complete = w.progress >= 100;
+    const faded = !!(w.planned || w.archived);
     const delta = watchDeltaForToday(w, viewingWatchDateKey);
     const deltaStr = (delta !== null && delta !== 0) ? `${delta > 0 ? '+' : ''}${delta}%p` : null;
     const memoCount = (w.memos || []).length;
-    return `<div class="card watch-card type-watch-${w.type} ${complete ? 'completed' : ''}" data-id="${w.id}">
+    return `<div class="card watch-card type-watch-${w.type} ${complete ? 'completed' : ''} ${faded ? 'faded' : ''}" data-id="${w.id}">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -2203,7 +2003,7 @@ function renderWatchBlocks() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(w.name)}</div>
-            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[w.type]}</span>${w.author ? `<span class="time-chip">${esc(w.author)}</span>` : ''}${w.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[w.type]}</span>${w.author ? `<span class="time-chip">${esc(w.author)}</span>` : ''}${w.planned ? '<span class="carryover-chip">예정</span>' : ''}${w.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
           </div>
           <div class="card-btns">
             <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchMemo(${w.id})" aria-label="감상 메모">
@@ -2226,7 +2026,11 @@ function renderWatchBlocks() {
           <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${w.progress}%"></div></div></div>
           ${deltaStr ? `<span class="watch-delta-chip">${deltaStr}</span>` : ''}
         </div>
-        <div class="field" style="margin:8px 0 0;">
+        <div class="field watch-flag-row" style="margin:8px 0 0;">
+          <label class="carryover-label">
+            <input type="checkbox" ${w.planned ? 'checked' : ''} onchange="toggleWatchPlanned(${w.id})">
+            <span>예정</span>
+          </label>
           <label class="carryover-label">
             <input type="checkbox" ${w.archived ? 'checked' : ''} onchange="toggleWatchArchive(${w.id})">
             <span>보관</span>
@@ -2360,10 +2164,13 @@ function syncWatchForToday() {
 }
 
 function dayWatchScoreFraction(day) {
-  // 그날 감상 블록들의 평균 진행도(0~1)를 감상 항목의 점수로 사용
+  // 그날 감상 블록들의 평균 진행도(0~1)를 감상 항목의 점수로 사용.
+  // "예정"으로 체크된 항목은 아직 시작 전이므로 평균 계산에서 제외한다.
   if (!day.watchBlocks || !day.watchBlocks.length) return null;
-  const sum = day.watchBlocks.reduce((s, w) => s + (w.progress / 100), 0);
-  return sum / day.watchBlocks.length;
+  const scorable = day.watchBlocks.filter(w => !w.planned);
+  if (!scorable.length) return null;
+  const sum = scorable.reduce((s, w) => s + (w.progress / 100), 0);
+  return sum / scorable.length;
 }
 
 /* =========================================================
@@ -2504,47 +2311,6 @@ function recalcGamePoints() {
 /* =========================================================
    MEMO PAGE
    ========================================================= */
-/* =========================================================
-   MEMO TAB – Twitter-style
-   ========================================================= */
-
-/* --- Storage --- */
-// memos: { "2026-06-17": [ {id, text, time, replies:[{id,text,time}], bookmarked:bool} ] }
-// pc_bookmarks: [id, ...] (flat list of bookmarked tweet ids, cross-date)
-let memoBookmarks = JSON.parse(localStorage.getItem('pc_bookmarks') || '[]');
-function saveMemoBookmarks() { localStorage.setItem('pc_bookmarks', JSON.stringify(memoBookmarks)); }
-
-/* --- State --- */
-let twView = 'timeline'; // 'timeline' | 'detail' | 'bookmark'
-let twDetailId = null;   // id of tweet currently open in detail
-let memoComposeReplyTo = null; // {dateKey, tweetId} | null
-
-/* --- Helpers --- */
-function findTweet(id) {
-  for (const key of Object.keys(memos)) {
-    const list = memos[key] || [];
-    const t = list.find(m => m.id === id);
-    if (t) return { tweet: t, dateKey: key };
-  }
-  return null;
-}
-
-function twDateStr(isoStr) {
-  const d = new Date(isoStr);
-  const yy = d.getFullYear();
-  const mo = d.getMonth() + 1;
-  const dd = d.getDate();
-  const hh = String(d.getHours()).padStart(2,'0');
-  const mm = String(d.getMinutes()).padStart(2,'0');
-  return `${yy}년 ${mo}월 ${dd}일 · 오전 ${d.getHours() < 12 ? '' : ''}${hh}:${mm}`;
-}
-
-function twShortTime(isoStr) {
-  const d = new Date(isoStr);
-  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-}
-
-/* --- Day navigation (same as before) --- */
 function changeMemoDay(delta) {
   const d = keyToDate(viewingMemoDateKey);
   d.setDate(d.getDate() + delta);
@@ -2569,271 +2335,78 @@ function renderMemoHeader() {
   document.getElementById('memoTodayJumpBtn').classList.toggle('hidden', isToday);
 }
 
-/* --- Switch views --- */
-function setTwView(v) {
-  twView = v;
-  const timeline = document.getElementById('twTimeline');
-  const detail   = document.getElementById('twDetail');
-  const bookmark = document.getElementById('twBookmarkFeed');
-  const hdrTimeline = document.getElementById('twViewTimeline');
-  const hdrDetail   = document.getElementById('twViewDetail');
-  const hdrBookmark = document.getElementById('twViewBookmark');
-
-  timeline.classList.toggle('hidden', v !== 'timeline');
-  detail.classList.toggle('hidden', v !== 'detail');
-  bookmark.classList.toggle('hidden', v !== 'bookmark');
-  hdrTimeline.classList.toggle('hidden', v !== 'timeline');
-  hdrDetail.classList.toggle('hidden', v !== 'detail');
-  hdrBookmark.classList.toggle('hidden', v !== 'bookmark');
+function autoGrowMemoInput(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(100, el.scrollHeight) + 'px';
 }
 
-/* --- Render timeline --- */
-function renderMemos() {
-  renderMemoTimeline();
-}
-
-function renderMemoTimeline() {
-  const el = document.getElementById('twTimeline');
-  const list = memos[viewingMemoDateKey] || [];
-  if (!list.length) {
-    el.innerHTML = `<div class="tw-empty"><strong>아직 없어요</strong><span>오늘 있었던 일을 기록해보세요</span></div>`;
-    return;
+function handleMemoKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMemo();
   }
-  el.innerHTML = list.map(m => renderTweetCard(m, viewingMemoDateKey)).join('');
 }
 
-function renderTweetCard(m, dateKey) {
-  const isBookmarked = memoBookmarks.includes(m.id);
-  const replyCount = (m.replies || []).length;
-  return `<div class="tw-tweet${replyCount ? ' has-replies' : ''}" onclick="openTweetDetail(${m.id})">
-    <div class="tw-tweet-content">${esc(m.text)}</div>
-    <div class="tw-tweet-meta">${twDateStr(m.time)}</div>
-    <div class="tw-tweet-actions" onclick="event.stopPropagation()">
-      <button class="tw-action-btn reply" onclick="openMemoCompose(${m.id})" title="답글">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        ${replyCount > 0 ? `<span>${replyCount}</span>` : ''}
-      </button>
-      <button class="tw-action-btn bookmark${isBookmarked ? ' active' : ''}" onclick="toggleMemoBookmark(${m.id})" title="북마크">
-        <svg viewBox="0 0 24 24" fill="${isBookmarked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-      </button>
-      <button class="tw-action-btn copy" onclick="copyMemo(${m.id})" title="복사">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-      </button>
-      <button class="tw-action-btn delete" onclick="deleteMemo(${m.id})" title="삭제">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-      </button>
-    </div>
-  </div>`;
-}
-
-/* --- Tweet detail --- */
-function openTweetDetail(id) {
-  const found = findTweet(id);
-  if (!found) return;
-  twDetailId = id;
-  setTwView('detail');
-  renderTweetDetail();
-}
-
-function closeTweetDetail() {
-  twDetailId = null;
-  setTwView('timeline');
-}
-
-function renderTweetDetail() {
-  const found = findTweet(twDetailId);
-  if (!found) return;
-  const { tweet: m, dateKey } = found;
-  const isBookmarked = memoBookmarks.includes(m.id);
-  const replies = m.replies || [];
-
-  const el = document.getElementById('twDetail');
-  el.innerHTML = `
-    <div class="tw-detail-main">
-      <div class="tw-detail-text">${esc(m.text)}</div>
-      <div class="tw-detail-meta">${twDateStr(m.time)}</div>
-      <div class="tw-detail-actions">
-        <button class="tw-action-btn reply" onclick="openMemoCompose(${m.id})" title="답글">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          ${replies.length > 0 ? `<span>${replies.length}</span>` : ''}
-        </button>
-        <button class="tw-action-btn bookmark${isBookmarked ? ' active' : ''}" onclick="toggleMemoBookmark(${m.id})" title="북마크">
-          <svg viewBox="0 0 24 24" fill="${isBookmarked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-        </button>
-        <button class="tw-action-btn copy" onclick="copyMemo(${m.id})" title="복사">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
-        <button class="tw-action-btn delete" onclick="deleteMemo(${m.id})" title="삭제">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-        </button>
-      </div>
-    </div>
-    ${replies.length ? `<div class="tw-reply-label">답글 ${replies.length}개</div>` : ''}
-    ${replies.map(r => `
-      <div class="tw-reply-card">
-        <div class="tw-reply-text">${esc(r.text)}</div>
-        <div class="tw-reply-meta">${twDateStr(r.time)}</div>
-        <div class="tw-reply-actions">
-          <button class="tw-action-btn copy" onclick="copyReply(${m.id}, ${r.id})" title="복사">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-          <button class="tw-action-btn delete" onclick="deleteReply(${m.id}, ${r.id})" title="삭제">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-          </button>
-        </div>
-      </div>
-    `).join('')}
-  `;
-}
-
-/* --- Bookmarks --- */
-function openMemoBookmarks() {
-  setTwView('bookmark');
-  renderMemoBookmarks();
-}
-
-function closeMemoBookmarks() {
-  setTwView('timeline');
-}
-
-function toggleMemoBookmark(id) {
-  const idx = memoBookmarks.indexOf(id);
-  if (idx >= 0) {
-    memoBookmarks.splice(idx, 1);
-  } else {
-    memoBookmarks.push(id);
-  }
-  saveMemoBookmarks();
-  // Re-render wherever we are
-  if (twView === 'timeline') renderMemoTimeline();
-  else if (twView === 'detail') renderTweetDetail();
-  else if (twView === 'bookmark') renderMemoBookmarks();
-}
-
-function renderMemoBookmarks() {
-  const el = document.getElementById('twBookmarkFeed');
-  if (!memoBookmarks.length) {
-    el.innerHTML = `<div class="tw-empty"><strong>북마크가 없어요</strong><span>중요한 게시물을 저장해두세요</span></div>`;
-    return;
-  }
-  const cards = memoBookmarks.map(id => {
-    const found = findTweet(id);
-    if (!found) return '';
-    return renderTweetCard(found.tweet, found.dateKey);
-  }).filter(Boolean);
-  el.innerHTML = cards.length ? cards.join('') : `<div class="tw-empty"><strong>북마크가 없어요</strong></div>`;
-}
-
-/* --- Compose popup --- */
-function openMemoCompose(replyToId) {
-  memoComposeReplyTo = replyToId ? { id: replyToId } : null;
-  const hint = document.getElementById('memoComposeReplyHint');
-  const ta   = document.getElementById('memoComposeInput');
-  if (replyToId) {
-    hint.textContent = '답글 달기';
-    hint.classList.remove('hidden');
-  } else {
-    hint.textContent = '';
-    hint.classList.add('hidden');
-  }
-  ta.value = '';
-  document.getElementById('memoComposeCharCount').textContent = '0 / 280';
-  openOverlay('memoComposeOverlay');
-  setTimeout(() => ta.focus(), 150);
-  ta.oninput = () => {
-    document.getElementById('memoComposeCharCount').textContent = `${ta.value.length} / 280`;
-  };
-}
-
-function submitMemoCompose() {
-  const ta = document.getElementById('memoComposeInput');
-  const text = ta.value.trim();
+function sendMemo() {
+  const input = document.getElementById('memoInput');
+  const text = input.value.trim();
   if (!text) return;
-  if (text.length > 280) { showToast('280자 이내로 입력해주세요'); return; }
-
-  if (memoComposeReplyTo) {
-    // Add reply to tweet
-    const found = findTweet(memoComposeReplyTo.id);
-    if (found) {
-      if (!found.tweet.replies) found.tweet.replies = [];
-      found.tweet.replies.push({ id: Date.now() + Math.floor(Math.random()*1000), text, time: new Date().toISOString() });
-      saveMemos();
-    }
-  } else {
-    // New top-level tweet
-    if (!memos[viewingMemoDateKey]) memos[viewingMemoDateKey] = [];
-    memos[viewingMemoDateKey].push({ id: Date.now() + Math.floor(Math.random()*1000), text, time: new Date().toISOString(), replies: [], bookmarked: false });
-    saveMemos();
-  }
-
-  closeOverlay('memoComposeOverlay');
-  memoComposeReplyTo = null;
-
-  // Re-render
-  if (twView === 'timeline') renderMemoTimeline();
-  else if (twView === 'detail') renderTweetDetail();
+  if (!memos[viewingMemoDateKey]) memos[viewingMemoDateKey] = [];
+  memos[viewingMemoDateKey].push({ id: Date.now() + Math.floor(Math.random()*1000), text, time: new Date().toISOString() });
+  saveMemos();
+  input.value = '';
+  input.style.height = 'auto';
+  renderMemos();
 }
 
-/* --- Copy / Delete --- */
 function copyMemo(id) {
-  const found = findTweet(id);
-  if (!found) return;
-  const text = found.tweet.text;
+  const list = memos[viewingMemoDateKey] || [];
+  const m = list.find(x => x.id === id);
+  if (!m) return;
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => showToast('복사했어요')).catch(() => showToast('복사에 실패했어요'));
+    navigator.clipboard.writeText(m.text).then(() => showToast('복사했어요')).catch(() => showToast('복사에 실패했어요'));
   } else {
     showToast('복사를 지원하지 않는 환경이에요');
   }
 }
 
 function deleteMemo(id) {
-  const found = findTweet(id);
-  if (!found) return;
-  memos[found.dateKey] = memos[found.dateKey].filter(m => m.id !== id);
-  // Remove from bookmarks too
-  const bi = memoBookmarks.indexOf(id);
-  if (bi >= 0) { memoBookmarks.splice(bi, 1); saveMemoBookmarks(); }
+  if (!memos[viewingMemoDateKey]) return;
+  memos[viewingMemoDateKey] = memos[viewingMemoDateKey].filter(x => x.id !== id);
   saveMemos();
-  if (twView === 'detail') { closeTweetDetail(); }
-  else if (twView === 'timeline') renderMemoTimeline();
-  else if (twView === 'bookmark') renderMemoBookmarks();
+  renderMemos();
 }
 
-function copyReply(tweetId, replyId) {
-  const found = findTweet(tweetId);
-  if (!found) return;
-  const r = (found.tweet.replies || []).find(x => x.id === replyId);
-  if (!r) return;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(r.text).then(() => showToast('복사했어요')).catch(() => showToast('복사에 실패했어요'));
+function renderMemos() {
+  const el = document.getElementById('memoList');
+  const list = memos[viewingMemoDateKey] || [];
+  if (!list.length) {
+    el.innerHTML = `<div class="memo-empty">이 날의 메모가 없어요</div>`;
+    return;
   }
+  el.innerHTML = list.map(m => {
+    const t = new Date(m.time);
+    const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+    return `<div class="memo-bubble">
+      <div class="memo-text">${esc(m.text)}</div>
+      <div class="memo-meta-row">
+        <span class="memo-time">${timeStr}</span>
+        <button class="memo-copy-btn" onclick="copyMemo(${m.id})">복사</button>
+        <button class="memo-delete-btn" onclick="deleteMemo(${m.id})">삭제</button>
+      </div>
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
 }
-
-function deleteReply(tweetId, replyId) {
-  const found = findTweet(tweetId);
-  if (!found) return;
-  found.tweet.replies = (found.tweet.replies || []).filter(x => x.id !== replyId);
-  saveMemos();
-  if (twView === 'detail') renderTweetDetail();
-}
-
-/* --- Legacy stubs (used by watch-memo, import/export) --- */
-function autoGrowMemoInput(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(100, el.scrollHeight) + 'px';
-}
-function sendMemo() {} // replaced by submitMemoCompose
 
 /* =========================================================
    YESTERDAY FEEDBACK
    ========================================================= */
 function computeDayScore(dayKey) {
-  // 절대 점수 시스템: 각 블록 타입별 고정 점수
   const day = days[dayKey];
   if (!day) return null;
-  const totalFocusMs = dayTotalFocusMs(day);
-  const score = Math.round(calcDayAbsScore(day) * 10) / 10;
-  return { score, blocks: day.blocks, watchBlocks: day.watchBlocks || [], totalFocusMs };
+  const result = computeDayScoreRaw(day, dayKey, blockDayFraction);
+  return { score: result.score, maxScore: result.maxScore, blocks: day.blocks, watchBlocks: day.watchBlocks || [], totalFocusMs: result.totalFocusMs };
 }
 
 function openYesterdayFeedback() {
@@ -2850,7 +2423,7 @@ function openYesterdayFeedback() {
   }
 
   const lines = [];
-  lines.push(`어제(${yKey}) 달성 점수: ${data.score !== null ? data.score + 'pt' : '집계할 수 없음'}`);
+  lines.push(`어제(${yKey}) 달성 점수: ${data.score !== null ? data.score + (data.maxScore > 0 ? '/' + data.maxScore : '점') : '집계할 수 없음'}`);
   if (data.totalFocusMs > 0) lines.push(`집중시간: ${formatDurationShort(data.totalFocusMs)}`);
   if (hasBlocks) {
     lines.push('');
@@ -2867,19 +2440,21 @@ function openYesterdayFeedback() {
     lines.push('');
     lines.push('감상 요약:');
     data.watchBlocks.forEach(w => {
-      lines.push(`- ${w.name} (${WATCH_TYPE_LABEL[w.type]}): ${w.progress}%${w.archived ? ' · 보관' : ''}`);
+      lines.push(`- ${w.name} (${WATCH_TYPE_LABEL[w.type]}): ${w.progress}%${w.planned ? ' · 예정' : ''}${w.archived ? ' · 보관' : ''}`);
     });
     const names = data.watchBlocks.map(w => w.name).join(', ');
     watchSummaryLine = ` 그리고 ${names}${data.watchBlocks.length > 1 ? '를' : '을'} 접하며 감상 시간도 챙겼어요.`;
   }
 
   const score = data.score;
+  // 절댓값 합산 점수는 100점 캡이 없으므로, 그날의 maxScore(다 채웠을 때 점수) 대비 비율로 피드백 톤을 정한다.
+  const achievePct = (score !== null && data.maxScore > 0) ? (score / data.maxScore) * 100 : (score !== null ? (score > 0 ? 100 : 0) : null);
   let summary;
   if (score === null) summary = '어제는 진행 체크가 있는 블록이 없어서 점수를 매기긴 어렵지만, 기록을 남긴 것 자체로 의미가 있어요.';
-  else if (score >= 30) summary = `어제는 ${score}pt로 정말 알찬 하루였어요. 계획한 것들을 거의 다 해냈네요. 오늘도 이 흐름을 이어가 보세요.`;
-  else if (score >= 20) summary = `어제는 ${score}pt로 꽤 잘 보낸 하루였어요. 몇 가지가 남았지만 전반적으로 좋은 흐름이었어요.`;
-  else if (score >= 10) summary = `어제는 ${score}pt로 절반 정도 진행됐어요. 무리한 계획이었는지, 컨디션 문제였는지 한번 돌아보면 오늘 도움이 될 거예요.`;
-  else if (score > 0) summary = `어제는 ${score}pt로 시작 단계에 머물렀어요. 괜찮아요, 오늘은 부담을 좀 줄여서 작은 것 하나부터 해보는 것도 방법이에요.`;
+  else if (achievePct >= 90) summary = `어제는 ${score}점으로 정말 알찬 하루였어요. 계획한 것들을 거의 다 해냈네요. 오늘도 이 흐름을 이어가 보세요.`;
+  else if (achievePct >= 70) summary = `어제는 ${score}점으로 꽤 잘 보낸 하루였어요. 몇 가지가 남았지만 전반적으로 좋은 흐름이었어요.`;
+  else if (achievePct >= 40) summary = `어제는 ${score}점으로 절반 정도 진행됐어요. 무리한 계획이었는지, 컨디션 문제였는지 한번 돌아보면 오늘 도움이 될 거예요.`;
+  else if (score > 0) summary = `어제는 ${score}점으로 시작 단계에 머물렀어요. 괜찮아요, 오늘은 부담을 좀 줄여서 작은 것 하나부터 해보는 것도 방법이에요.`;
   else summary = '어제는 거의 진행되지 못한 하루였어요. 너무 자책하지 말고, 오늘 할 일을 좀 더 작은 단위로 쪼개보는 게 도움이 될 수 있어요.';
   summary += watchSummaryLine;
 
@@ -2894,23 +2469,23 @@ function openMenu() {
   document.getElementById('wTodo').value = weights.todo;
   document.getElementById('wOnce').value = weights.once;
   document.getElementById('wLeisure').value = weights.leisure;
-  document.getElementById('wRoutine').value = weights.routine ?? 30;
-  document.getElementById('wFocus').value = weights.focus ?? 20;
-  document.getElementById('wWatch').value = weights.watch ?? 5;
-  document.getElementById('wUnspecified').value = weights.unspecified ?? 15;
+  document.getElementById('wRoutine').value = weights.routine ?? 8;
+  document.getElementById('wFocus').value = weights.focus ?? 6;
+  document.getElementById('wWatch').value = weights.watch ?? 3;
+  document.getElementById('wUnspecified').value = weights.unspecified ?? 5;
   document.getElementById('menuOverlay').classList.add('open');
 }
 
 function saveMenuSettings() {
   weights = {
-    schedule: parseInt(document.getElementById('wSchedule').value) || 0,
-    todo: parseInt(document.getElementById('wTodo').value) || 0,
-    once: parseInt(document.getElementById('wOnce').value) || 0,
-    leisure: parseInt(document.getElementById('wLeisure').value) || 0,
-    routine: parseInt(document.getElementById('wRoutine').value) || 0,
-    focus: parseInt(document.getElementById('wFocus').value) || 0,
-    watch: parseInt(document.getElementById('wWatch').value) || 0,
-    unspecified: parseInt(document.getElementById('wUnspecified').value) || 0,
+    schedule: parseFloat(document.getElementById('wSchedule').value) || 0,
+    todo: parseFloat(document.getElementById('wTodo').value) || 0,
+    once: parseFloat(document.getElementById('wOnce').value) || 0,
+    leisure: parseFloat(document.getElementById('wLeisure').value) || 0,
+    routine: parseFloat(document.getElementById('wRoutine').value) || 0,
+    focus: parseFloat(document.getElementById('wFocus').value) || 0,
+    watch: parseFloat(document.getElementById('wWatch').value) || 0,
+    unspecified: parseFloat(document.getElementById('wUnspecified').value) || 0,
     focusGoalMinutes: weights.focusGoalMinutes ?? FOCUS_GOAL_MINUTES_DEFAULT,
   };
   saveWeightsToStorage();
@@ -2920,7 +2495,7 @@ function saveMenuSettings() {
 }
 
 function exportBackup() {
-  const data = { days, weights, carryoverMeta, watchChainMeta, memos, memoBookmarks, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, listBlocks, exportedAt: new Date().toISOString() };
+  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2946,12 +2521,10 @@ function importBackup(e) {
       carryoverMeta = (data.carryoverMeta && typeof data.carryoverMeta === 'object') ? data.carryoverMeta : carryoverMeta;
       watchChainMeta = (data.watchChainMeta && typeof data.watchChainMeta === 'object') ? data.watchChainMeta : watchChainMeta;
       memos = (data.memos && typeof data.memos === 'object') ? data.memos : memos;
-      if (Array.isArray(data.memoBookmarks)) { memoBookmarks = data.memoBookmarks; saveMemoBookmarks(); }
       if (typeof data.gamePoints === 'number') gamePoints = data.gamePoints;
       if (data.gameAddedScores && typeof data.gameAddedScores === 'object') gameAddedScores = data.gameAddedScores;
       if (Array.isArray(data.gameSpendLog)) gameSpendLog = data.gameSpendLog;
       if (Array.isArray(data.planBlocks)) planBlocks = data.planBlocks;
-      if (Array.isArray(data.listBlocks)) { listBlocks = data.listBlocks; saveListBlocks(); }
       if (Array.isArray(data.periodPlans)) periodPlans = data.periodPlans;
       saveDays(); saveWeightsToStorage(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); saveGamePoints();
       savePlanBlocks(); savePeriodPlans();
@@ -3007,8 +2580,6 @@ renderDayHeader();
 renderBlocks();
 renderScore();
 renderGamePoints();
-// memo tab init (not active by default, but set up the view state)
-setTwView('timeline');
 
 // 진행 중인 타이머가 있으면 (예: 앱을 닫았다 다시 열었을 때) 화면 갱신을 위해
 // 항상 tick 인터벌을 켜둔다. 타이머 시트가 열려있지 않으면 timerTick 내부에서
