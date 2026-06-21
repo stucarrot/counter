@@ -51,6 +51,7 @@ let gameAddedScores = JSON.parse(localStorage.getItem('pc_game_added_scores') ||
 let gameSpendLog = JSON.parse(localStorage.getItem('pc_game_spend_log') || '[]');
 let planBlocks = JSON.parse(localStorage.getItem('pc_plan_blocks') || '[]');
 let periodPlans = JSON.parse(localStorage.getItem('pc_period_plans') || '[]');
+let listBlocks  = JSON.parse(localStorage.getItem('pc_list_blocks')  || '[]');
 
 let editBlockId = null;
 let deleteBlockId = null;
@@ -100,6 +101,7 @@ function saveWatchChainMeta() { localStorage.setItem('pc_watch_chain_meta', JSON
 function saveMemos() { localStorage.setItem('pc_memos', JSON.stringify(memos)); }
 function savePlanBlocks() { localStorage.setItem('pc_plan_blocks', JSON.stringify(planBlocks)); }
 function savePeriodPlans() { localStorage.setItem('pc_period_plans', JSON.stringify(periodPlans)); }
+function saveListBlocks()  { localStorage.setItem('pc_list_blocks',  JSON.stringify(listBlocks));  }
 function saveActiveTimer() {
   if (activeTimer) localStorage.setItem('pc_active_timer', JSON.stringify(activeTimer));
   else localStorage.removeItem('pc_active_timer');
@@ -151,6 +153,7 @@ function switchTab(tab) {
   document.getElementById('reorderToggle').style.display = (tab === 'todo' || tab === 'watch' || tab === 'plan') ? '' : 'none';
   if (reordering && tab !== 'todo' && tab !== 'watch' && tab !== 'plan') toggleReorder();
   if (tab === 'memo') {
+    setTwView('timeline');
     renderMemoHeader();
     renderMemos();
   } else if (tab === 'watch') {
@@ -178,12 +181,37 @@ function toggleReorder() {
 /* =========================================================
    GENERIC OVERLAY HELPERS
    ========================================================= */
+/* ===== Dark mode ===== */
+(function() {
+  const saved = localStorage.getItem('pc_dark_mode');
+  if (saved === '1') document.body.classList.add('dark');
+})();
+
+function toggleDarkMode() {
+  const isDark = document.body.classList.toggle('dark');
+  localStorage.setItem('pc_dark_mode', isDark ? '1' : '0');
+}
+
+/* ===== Watch form: complete checkbox ===== */
+function onWfCompleteChange() {
+  const cb = document.getElementById('wfComplete');
+  const inp = document.getElementById('wfProgress');
+  if (cb.checked) inp.value = 100;
+}
+
+function onWfProgressInput() {
+  const inp = document.getElementById('wfProgress');
+  const cb  = document.getElementById('wfComplete');
+  cb.checked = (parseInt(inp.value, 10) === 100);
+}
+
+function openOverlay(id) { document.getElementById(id).classList.add('open'); }
 function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
 function overlayClose(e, id) { if (e.target === document.getElementById(id)) closeOverlay(id); }
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay'].forEach(closeOverlay);
+    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay','listBlockOverlay','listItemOverlay','listViewOverlay'].forEach(closeOverlay);
   }
 });
 
@@ -238,6 +266,7 @@ function selectSeg(groupId, btn) {
 function onTypeChanged() {
   const carryoverField = document.getElementById('bfCarryoverField');
   const checkbox = document.getElementById('bfCarryover');
+  document.getElementById('bfRoutineIntervalField').classList.toggle('hidden', selectedType !== 'routine');
   if (selectedType === 'routine') {
     // 루틴은 항상 이행(carryover) — 체크박스를 숨기고 강제로 켠 상태로 취급
     carryoverField.classList.add('hidden');
@@ -317,6 +346,8 @@ function openBlockAdd() {
   document.getElementById('bfSplitFields').classList.add('hidden');
   document.getElementById('bfCarryover').checked = false;
   document.getElementById('bfCarryoverField').classList.remove('hidden');
+  document.getElementById('bfRoutineInterval').value = '1';
+  document.getElementById('bfRoutineIntervalField').classList.add('hidden');
   selectedType = null; selectedTime = 'none'; selectedProgress = null;
   splitDates = [];
   renderSplitDateRows();
@@ -376,8 +407,14 @@ function openBlockEdit(id) {
   }
 
   document.getElementById('bfCarryover').checked = !!b.carryover;
-  if (b.type === 'routine') document.getElementById('bfCarryoverField').classList.add('hidden');
-  else document.getElementById('bfCarryoverField').classList.remove('hidden');
+  document.getElementById('bfRoutineInterval').value = b.routineInterval || 1;
+  if (b.type === 'routine') {
+    document.getElementById('bfCarryoverField').classList.add('hidden');
+    document.getElementById('bfRoutineIntervalField').classList.remove('hidden');
+  } else {
+    document.getElementById('bfCarryoverField').classList.remove('hidden');
+    document.getElementById('bfRoutineIntervalField').classList.add('hidden');
+  }
 
   document.getElementById('blockFormOverlay').classList.add('open');
   setTimeout(() => document.getElementById('bfName').focus(), 80);
@@ -421,6 +458,10 @@ function submitBlockForm() {
       b.progressType = selectedProgress;
       // 루틴 ↔ 비루틴 전환은 막는다 (openBlockEdit에서 버튼 disabled 처리됨)
       b.type = b.type === 'routine' ? 'routine' : selectedType;
+      if (b.type === 'routine') {
+        const iv = parseInt(document.getElementById('bfRoutineInterval').value) || 1;
+        b.routineInterval = iv > 1 ? iv : undefined;
+      }
 
       if (selectedProgress === 'counter') { b.total = total; b.current = current; }
       else if (selectedProgress === 'toggle') { if (b.done === undefined) b.done = false; }
@@ -429,10 +470,12 @@ function submitBlockForm() {
       applyCarryoverFlag(b, wantsCarryover);
     }
   } else {
+    const routineInterval = selectedType === 'routine' ? (parseInt(document.getElementById('bfRoutineInterval').value) || 1) : undefined;
     const block = {
       id: Date.now() + Math.floor(Math.random()*1000),
       name, desc, type: selectedType, time: selectedTime, customTime,
-      progressType: selectedProgress, sessions: []
+      progressType: selectedProgress, sessions: [],
+      ...(routineInterval > 1 ? { routineInterval } : {})
     };
     if (selectedProgress === 'counter') { block.total = total; block.current = current; }
     if (selectedProgress === 'toggle') { block.done = false; }
@@ -596,6 +639,14 @@ function syncCarryoversForToday() {
       return;
     }
 
+    // n일마다 루틴: 마지막으로 나타난 날로부터 n일이 지나지 않았으면 오늘에 추가하지 않음
+    if (template.type === 'routine' && template.routineInterval > 1 && templateKey) {
+      const daysSince = Math.round(
+        (keyToDate(todayKey) - keyToDate(templateKey)) / (1000 * 60 * 60 * 24)
+      );
+      if (daysSince < template.routineInterval) return;
+    }
+
     // 미완료 → 그날까지의 진행도를 그대로 들고 오늘로 복사 (루틴은 진행도 리셋, 이행은 유지)
     const nb = { ...template, id: Date.now() + Math.floor(Math.random()*100000) };
     if (template.type === 'routine') {
@@ -704,14 +755,60 @@ function renderBlocks() {
   // 위/아래 버튼은 실제 데이터 배열(day.blocks)의 인덱스를 그대로 사용해야 하므로,
   // 정렬은 표시용으로만 하고 원래 인덱스(realIdx)를 함께 들고 다닌다.
   const withIdx = day.blocks.map((b, realIdx) => ({ b, realIdx }));
+
+  // 블록의 시간 값을 분(0~1439)으로 변환. 시간 없음은 Infinity
+  function blockToMinutes(b) {
+    if (b.time === 'custom' && b.customTime) {
+      const [hh, mm] = b.customTime.split(':').map(Number);
+      return hh * 60 + (mm || 0);
+    }
+    if (b.time === 'split') return Infinity; // 쪼개기는 시간없음 구역으로
+    // morning/afternoon/night 레거시 데이터 호환
+    if (b.time === 'morning') return 0;
+    if (b.time === 'afternoon') return 12 * 60;
+    if (b.time === 'night') return 17 * 60;
+    return Infinity;
+  }
+
   const sorted = withIdx.slice().sort((x, y) => {
     const xDone = x.b.progressType !== 'none' && isBlockComplete(x.b) ? 1 : 0;
     const yDone = y.b.progressType !== 'none' && isBlockComplete(y.b) ? 1 : 0;
     if (xDone !== yDone) return xDone - yDone;
-    return x.realIdx - y.realIdx; // 같은 그룹 내에서는 원래 순서 유지
+    const xm = blockToMinutes(x.b), ym = blockToMinutes(y.b);
+    if (xm !== ym) return xm - ym;
+    return x.realIdx - y.realIdx;
   });
 
-  el.innerHTML = sorted.map(({ b, realIdx }) => {
+  // 가로선 삽입을 위해 구역 경계 파악 (12:00 = 720분, 17:00 = 1020분)
+  const LUNCH_MIN = 12 * 60;
+  const EVENING_MIN = 17 * 60;
+
+  // 구역별 미완료 블록 존재 여부
+  function hasBlockInZone(minFrom, minTo) {
+    return sorted.some(({ b }) => {
+      if (b.progressType !== 'none' && isBlockComplete(b)) return false;
+      const m = blockToMinutes(b);
+      return m >= minFrom && m < minTo;
+    });
+  }
+  let lunchLineInserted = false, eveningLineInserted = false;
+
+  const cards = [];
+  sorted.forEach(({ b, realIdx }) => {
+    const bMin = blockToMinutes(b);
+    // 점심 가로선: 첫 오후 블록 직전
+    if (!lunchLineInserted && bMin >= LUNCH_MIN) {
+      cards.push('<div class="time-divider"><span>오후</span></div>');
+      lunchLineInserted = true;
+    }
+    // 저녁 가로선: 첫 저녁 블록 직전
+    if (!eveningLineInserted && bMin >= EVENING_MIN) {
+      cards.push('<div class="time-divider"><span>저녁</span></div>');
+      eveningLineInserted = true;
+    }
+
+    const idx = realIdx;
+    const { b: _, ...rest } = { b, realIdx }; // unused warning 회피용
     const idx = realIdx; // moveBlock 등에서 쓰는 실제 배열 인덱스
     const complete = isBlockComplete(b);
     let progressHtml = '';
@@ -759,7 +856,7 @@ function renderBlocks() {
     const carryoverBadge = (b.carryover && b.type !== 'routine') ? `<span class="carryover-chip">이행</span>` : '';
     const hasTime = blockTotalFocusMs(b) > 0 || (activeTimer && activeTimer.blockId === b.id);
     const isTimerActive = activeTimer && activeTimer.blockId === b.id && activeTimer.dateKey === viewingDateKey;
-    return `<div class="card block-card type-${b.type} ${complete && b.progressType!=='none' ? 'completed':''}" data-id="${b.id}">
+    const cardHtml = `<div class="card block-card type-${b.type} ${complete && b.progressType!=='none' ? 'completed':''}" data-id="${b.id}">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -791,7 +888,10 @@ function renderBlocks() {
         ${renderSessionLog(b)}
       </div>
     </div>`;
-  }).join('');
+    cards.push(cardHtml);
+  });
+
+  el.innerHTML = cards.join('');
 }
 
 /* =========================================================
@@ -832,60 +932,62 @@ function dayTotalFocusMs(day) {
   return day.blocks.reduce((sum, b) => sum + blockTotalFocusMs(b), 0);
 }
 
+/* 절대 점수 시스템
+   일회성: 5점, 할일: 10점, 일정: 10점, 여가: 5점, 루틴: 5점 (완료 기준)
+   감상: 진행도 1%p당 0.1점 (최대 10점)
+   progressType === 'none' 블록은 점수 대상 아님
+*/
+const ABS_SCORE = { once: 5, todo: 10, schedule: 10, leisure: 5, routine: 5 };
+
+function blockAbsScore(b) {
+  if (b.type === 'watch') return 0; // 감상은 별도
+  const max = ABS_SCORE[b.type] ?? 5;
+  const frac = blockProgressFraction(b);
+  return max * Math.min(1, frac);
+}
+
+function calcDayAbsScore(day) {
+  let total = 0;
+  (day.blocks || []).forEach(b => {
+    if (b.progressType === 'none') return;
+    total += blockAbsScore(b);
+  });
+  (day.watchBlocks || []).forEach(w => {
+    const prog = typeof w.progress === 'number' ? w.progress : 0;
+    total += prog * 0.1; // 1%p당 0.1점
+  });
+  return total;
+}
+
 function renderScore() {
   const day = ensureDay(viewingDateKey);
   const el = document.getElementById('scoreCard');
   const scorable = day.blocks.filter(b => b.progressType !== 'none');
   const totalFocusMs = dayTotalFocusMs(day);
-  const focusWeight = weights.focus ?? 0;
-  const hasFocusComponent = focusWeight > 0;
-  const watchWeight = weights.watch ?? 0;
-  const watchFrac = dayWatchScoreFraction(day);
-  const hasWatchComponent = watchWeight > 0 && watchFrac !== null;
+  const hasWatch = (day.watchBlocks || []).length > 0;
 
-  if (!scorable.length && !hasFocusComponent && !hasWatchComponent) {
+  if (!scorable.length && !hasWatch) {
     el.innerHTML = `<div class="score-top"><div class="score-num">—</div></div>
-      <div class="score-feedback">진행 체크가 있는 블록을 추가하면 달성률이 표시돼요.</div>
+      <div class="score-feedback">진행 체크가 있는 블록을 추가하면 점수가 표시돼요.</div>
       <div class="score-bottom-row"><span></span>${renderFeedbackButton()}</div>`;
     return;
   }
 
-  let weightedSum = 0, weightTotal = 0;
-  scorable.forEach(b => {
-    const w = weights[b.type] ?? 25;
-    const frac = blockProgressFraction(b);
-    weightedSum += w * frac;
-    weightTotal += w;
-  });
-  if (hasFocusComponent) {
-    const focusFrac = Math.min(1, totalFocusMs / getFocusGoalMs());
-    weightedSum += focusWeight * focusFrac;
-    weightTotal += focusWeight;
-  }
-  if (hasWatchComponent) {
-    weightedSum += watchWeight * watchFrac;
-    weightTotal += watchWeight;
-  }
-  const baseScore = weightTotal > 0 ? Math.round((weightedSum / weightTotal) * 100) : 0;
-  // 초과달성 보너스: 가중치 비례로 합산, 기준 weightTotal 대비 %로 환산해 총점에 추가
-  let overBonus = 0;
-  if (weightTotal > 0) {
-    scorable.forEach(b => { overBonus += blockOverAchieveBonus(b); });
-    overBonus = Math.round((overBonus / weightTotal) * 100);
-  }
-  const score = Math.max(0, baseScore) + overBonus;
+  const score = Math.round(calcDayAbsScore(day) * 10) / 10;
+  const scoreDisplay = Number.isInteger(score) ? score : score.toFixed(1);
 
   let feedback;
-  if (score >= 90) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
-  else if (score >= 70) feedback = '꽤 잘 해내고 있어요. 남은 것도 마무리해봐요.';
-  else if (score >= 40) feedback = '절반 정도 진행됐어요. 천천히 이어가요.';
+  if (score >= 30) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
+  else if (score >= 20) feedback = '꽤 잘 해내고 있어요. 남은 것도 마무리해봐요.';
+  else if (score >= 10) feedback = '절반 정도 진행됐어요. 천천히 이어가요.';
   else if (score > 0) feedback = '이제 시작이에요. 하나씩 차근차근 해봐요.';
   else feedback = '아직 시작 전이에요. 작은 것부터 시작해볼까요?';
 
+  const hasFocusComponent = (weights.focus ?? 0) > 0;
+
   el.innerHTML = `
-    <div class="score-top"><div class="score-num">${score}<span>/100</span></div></div>
+    <div class="score-top"><div class="score-num">${scoreDisplay}<span>pt</span></div></div>
     <div class="score-feedback">${feedback}</div>
-    <div class="score-bar"><div class="score-bar-fill" style="width:${score}%"></div></div>
     <div class="score-bottom-row">
       ${hasFocusComponent ? `<span class="score-focus-row">집중 <strong>${formatDurationShort(totalFocusMs)}</strong></span>` : '<span></span>'}
       ${renderFeedbackButton()}
@@ -1124,6 +1226,7 @@ function switchPlanSubtab(sub) {
     document.getElementById(`planSubtab-${s}`).classList.toggle('active', sub === s);
   });
   document.getElementById('periodAddBtn').classList.toggle('hidden', sub !== 'period');
+  document.getElementById('listAddBtn').classList.toggle('hidden', sub !== 'period');
   document.getElementById('planAddBtn').classList.toggle('hidden', sub === 'period');
   if (reordering) toggleReorder(); // 서브탭을 바꾸면 순서모드는 헷갈리니 끈다
   renderPlanList();
@@ -1291,9 +1394,18 @@ function planTimeRangeLabel(p) {
 }
 
 // "시간순" 서브탭 정렬 기준 키 (날짜 없으면 맨 뒤로)
+const PLAN_TIME_SLOT_ORDER = { morning: '00', afternoon: '01', night: '02' };
 function planSortKey(p) {
   const datePart = p.dateStart || '9999-99-99';
-  const timePart = p.timeStart || '99:99';
+  // timeStart가 있으면 실제 시각 기준, 없으면 슬롯(morning/afternoon/night) 기준
+  let timePart;
+  if (p.timeStart) {
+    timePart = p.timeStart.substring(0, 5); // HH:MM
+  } else if (p.timeSlot && PLAN_TIME_SLOT_ORDER[p.timeSlot] !== undefined) {
+    timePart = PLAN_TIME_SLOT_ORDER[p.timeSlot];
+  } else {
+    timePart = '99:99';
+  }
   return `${datePart} ${timePart}`;
 }
 
@@ -1577,14 +1689,17 @@ function openRefPicker() {
 }
 
 function resolveRef(ref) {
-  // 참조가 가리키는 실제 블록을 찾아 반환. 없으면 null (삭제된 것으로 간주).
   if (ref.kind === 'plan') {
     const p = planBlocks.find(x => x.id === ref.id);
-    return p ? { name: p.name, meta: TYPE_LABEL[p.type] } : null;
+    return p ? { name: p.name, meta: `계획 · ${TYPE_LABEL[p.type] || p.type}` } : null;
   } else if (ref.kind === 'todo') {
     const dayObj = days[ref.dateKey];
     const b = dayObj && dayObj.blocks.find(x => x.id === ref.id);
-    return b ? { name: b.name, meta: `${TYPE_LABEL[b.type]} · ${ref.dateKey}` } : null;
+    return b ? { name: b.name, meta: `할일 · ${ref.dateKey}` } : null;
+  } else if (ref.kind === 'watch') {
+    const dayObj = days[ref.dateKey];
+    const w = dayObj && dayObj.watchBlocks && dayObj.watchBlocks.find(x => x.id === ref.id);
+    return w ? { name: w.name, meta: `감상 · ${w.progress ?? 0}%` } : null;
   }
   return null;
 }
@@ -1592,20 +1707,44 @@ function resolveRef(ref) {
 function renderRefPickerList() {
   const el = document.getElementById('refPickerList');
   const items = [];
+  const todayKey = TODAY_KEY();
 
+  // 계획 블록 (전체)
   planBlocks.forEach(p => {
-    items.push({ kind: 'plan', id: p.id, dateKey: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type]}` });
+    items.push({ kind: 'plan', id: p.id, dateKey: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type] || p.type}` });
   });
-  // 기간계획 참조는 계획 탭 블록만 허용
+
+  // 할일 블록: 날짜가 오늘 이후인 것만
+  Object.keys(days).sort().forEach(dateKey => {
+    if (dateKey < todayKey) return;
+    const dayObj = days[dateKey];
+    if (!dayObj || !dayObj.blocks) return;
+    dayObj.blocks.forEach(b => {
+      items.push({ kind: 'todo', id: b.id, dateKey, name: b.name, meta: `할일 · ${dateKey}` });
+    });
+  });
+
+  // 감상 블록: 보관 상태 아니고 진행도 100% 미만인 것
+  Object.keys(days).sort().forEach(dateKey => {
+    const dayObj = days[dateKey];
+    if (!dayObj || !dayObj.watchBlocks) return;
+    dayObj.watchBlocks.forEach(w => {
+      if (w.archived) return;
+      const prog = typeof w.progress === 'number' ? w.progress : 0;
+      if (prog >= 100) return;
+      items.push({ kind: 'watch', id: w.id, dateKey, name: w.name, meta: `감상 · ${prog}%` });
+    });
+  });
 
   if (!items.length) {
-    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 계획 블록이 없어요</p></div>`;
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 블록이 없어요</p></div>`;
     return;
   }
 
   el.innerHTML = items.map(item => {
     const isSelected = pendingPeriodRefs.some(r => r.kind === item.kind && r.id === item.id && r.dateKey === item.dateKey);
-    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},null)">
+    const dkArg = item.dateKey ? `'${item.dateKey}'` : 'null';
+    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},${dkArg})">
       <span>${esc(item.name)}</span>
       <span class="ref-picker-item-meta">${esc(item.meta)}</span>
     </div>`;
@@ -1654,17 +1793,168 @@ function updateRefDate(idx, field, value) {
   if (pendingPeriodRefs[idx]) pendingPeriodRefs[idx][field] = value;
 }
 
+/* =========================================================
+   LIST BLOCKS (목록)
+   ========================================================= */
+let editListId = null;
+let editListBlockId = null;
+
+function openListBlockAdd() {
+  editListId = null;
+  document.getElementById('listBlockTitle').value = '';
+  document.getElementById('listBlockOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('listBlockTitle').focus(), 80);
+}
+
+function openListBlockEdit(id) {
+  const lb = listBlocks.find(x => x.id === id);
+  if (!lb) return;
+  editListId = id;
+  document.getElementById('listBlockTitle').value = lb.title;
+  document.getElementById('listBlockOverlay').classList.add('open');
+}
+
+function submitListBlock() {
+  const title = document.getElementById('listBlockTitle').value.trim();
+  if (!title) { showToast('제목을 입력해주세요'); return; }
+  if (editListId) {
+    const lb = listBlocks.find(x => x.id === editListId);
+    if (lb) lb.title = title;
+  } else {
+    listBlocks.push({ id: Date.now(), title, items: [] });
+  }
+  saveListBlocks();
+  closeOverlay('listBlockOverlay');
+  renderPlanList();
+}
+
+function openListItemAdd(listId) {
+  editListBlockId = listId;
+  document.getElementById('listItemTitle').value = '';
+  document.getElementById('listItemDesc').value = '';
+  document.getElementById('listItemOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('listItemTitle').focus(), 80);
+}
+
+function submitListItem() {
+  const title = document.getElementById('listItemTitle').value.trim();
+  const desc  = document.getElementById('listItemDesc').value.trim();
+  if (!title) { showToast('제목을 입력해주세요'); return; }
+  const lb = listBlocks.find(x => x.id === editListBlockId);
+  if (!lb) return;
+  lb.items.push({ id: Date.now(), title, desc, checked: false });
+  saveListBlocks();
+  closeOverlay('listItemOverlay');
+  renderPlanList();
+}
+
+function toggleListItem(listId, itemId) {
+  const lb = listBlocks.find(x => x.id === listId);
+  if (!lb) return;
+  const item = lb.items.find(x => x.id === itemId);
+  if (item) item.checked = !item.checked;
+  saveListBlocks();
+  renderPlanList();
+}
+
+function deleteListBlock(id) {
+  listBlocks = listBlocks.filter(x => x.id !== id);
+  saveListBlocks();
+  renderPlanList();
+}
+
+function openListViewPopup(listId) {
+  const lb = listBlocks.find(x => x.id === listId);
+  if (!lb) return;
+  const el = document.getElementById('listViewContent');
+  el.innerHTML = lb.items.length
+    ? lb.items.map(item => `
+      <div class="list-view-item" onclick="toggleListItem(${listId},${item.id});openListViewPopup(${listId})">
+        <input type="checkbox" class="list-cb" ${item.checked ? 'checked' : ''} onclick="event.stopPropagation();toggleListItem(${listId},${item.id});openListViewPopup(${listId})">
+        <div class="list-view-item-body">
+          <span class="list-item-title${item.checked?' checked':''}">${esc(item.title)}</span>
+          ${item.desc ? `<span class="list-item-desc">${esc(item.desc)}</span>` : ''}
+        </div>
+      </div>`).join('')
+    : `<div style="color:var(--gray-400);text-align:center;padding:20px">항목이 없어요</div>`;
+  document.getElementById('listViewTitle').textContent = lb.title;
+  document.getElementById('listViewOverlay').classList.add('open');
+}
+
+function renderListBlocks(el) {
+  const html = listBlocks.map(lb => {
+    const items = lb.items || [];
+    const preview = items.slice(0, 5);
+    const hasMore = items.length > 5;
+    const previewHtml = preview.map(item => `
+      <div class="list-preview-item" onclick="event.stopPropagation();toggleListItem(${lb.id},${item.id})">
+        <input type="checkbox" class="list-cb" ${item.checked ? 'checked' : ''} onclick="event.stopPropagation();toggleListItem(${lb.id},${item.id})">
+        <span class="list-item-title${item.checked?' checked':''}">${esc(item.title)}</span>
+      </div>`).join('');
+    return `<div class="card list-block-card">
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="card-title">${esc(lb.title)}</div>
+          <div class="list-count-label">${items.length}개 항목 · ${items.filter(i=>i.checked).length}개 완료</div>
+        </div>
+        <div class="card-btns">
+          <button class="icon-btn" onclick="openListViewPopup(${lb.id})" aria-label="보기" title="전체 보기">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+          <button class="icon-btn" onclick="openListBlockEdit(${lb.id})" aria-label="수정" title="수정">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn" onclick="openListItemAdd(${lb.id})" aria-label="항목 추가" title="항목 추가">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <button class="icon-btn" onclick="deleteListBlock(${lb.id})" aria-label="삭제" title="삭제">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>
+      </div>
+      ${previewHtml ? `<div class="list-preview">${previewHtml}${hasMore ? `<div class="list-more-hint" onclick="openListViewPopup(${lb.id})">···  더보기 (${items.length - 5}개)</div>` : ''}</div>` : ''}
+    </div>`;
+  }).join('');
+  el.innerHTML = html || `<div class="empty"><p>목록을 추가해보세요</p></div>`;
+}
+
+/* =========================================================
+   PERIOD PLAN (기간)
+   ========================================================= */
+
 function renderPeriodList(el) {
+  // 목록 블록 먼저 렌더링
+  const listSection = document.createElement('div');
+  renderListBlocks(listSection);
+  el.innerHTML = '';
+  if (listBlocks.length) {
+    const header = document.createElement('div');
+    header.className = 'period-section-header';
+    header.textContent = '목록';
+    el.appendChild(header);
+    el.appendChild(listSection);
+  } else {
+    el.appendChild(listSection);
+  }
+
   const list = periodPlans.slice().sort((a, b) => (a.dateStart || '').localeCompare(b.dateStart || ''));
-  if (!list.length) {
+  if (!list.length && !listBlocks.length) {
     el.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
-      <p>기간계획을 추가해보세요</p>
+      <p>기간/목록을 추가해보세요</p>
     </div>`;
     return;
   }
-  el.innerHTML = list.map(pp => {
-    // refs를 날짜순으로 정렬: 날짜 미지정 → 맨 앞, 날짜 지정 → 날짜순, 날짜 같으면 날짜(단일) > 날짜범위
+  if (!list.length) return;
+  // 기간계획 섹션 헤더
+  if (list.length) {
+    const pHeader = document.createElement('div');
+    pHeader.className = 'period-section-header';
+    pHeader.textContent = '기간';
+    el.appendChild(pHeader);
+  }
+  const periodSection = document.createElement('div');
+  periodSection.innerHTML = list.map(pp => {
     const sortedRefs = (pp.refs || []).slice().sort((a, b) => {
       const aDate = a.refDate || '';
       const bDate = b.refDate || '';
@@ -1705,6 +1995,7 @@ function renderPeriodList(el) {
       ${refsHtml ? `<div class="period-ref-list">${refsHtml}</div>` : ''}
     </div>`;
   }).join('');
+  el.appendChild(periodSection);
 }
 
 /* =========================================================
@@ -1740,6 +2031,7 @@ function openWatchAdd() {
   document.getElementById('wfName').value = '';
   document.getElementById('wfAuthor').value = '';
   document.getElementById('wfProgress').value = '0';
+  document.getElementById('wfComplete').checked = false;
   document.getElementById('wfArchive').checked = false;
   selectedWatchType = null;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(b => b.classList.remove('selected'));
@@ -1756,6 +2048,7 @@ function openWatchEdit(id) {
   document.getElementById('wfName').value = w.name;
   document.getElementById('wfAuthor').value = w.author || '';
   document.getElementById('wfProgress').value = w.progress;
+  document.getElementById('wfComplete').checked = (parseInt(w.progress) === 100);
   document.getElementById('wfArchive').checked = !!w.archived;
   selectedWatchType = w.type;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === w.type));
@@ -2213,6 +2506,47 @@ function recalcGamePoints() {
 /* =========================================================
    MEMO PAGE
    ========================================================= */
+/* =========================================================
+   MEMO TAB – Twitter-style
+   ========================================================= */
+
+/* --- Storage --- */
+// memos: { "2026-06-17": [ {id, text, time, replies:[{id,text,time}], bookmarked:bool} ] }
+// pc_bookmarks: [id, ...] (flat list of bookmarked tweet ids, cross-date)
+let memoBookmarks = JSON.parse(localStorage.getItem('pc_bookmarks') || '[]');
+function saveMemoBookmarks() { localStorage.setItem('pc_bookmarks', JSON.stringify(memoBookmarks)); }
+
+/* --- State --- */
+let twView = 'timeline'; // 'timeline' | 'detail' | 'bookmark'
+let twDetailId = null;   // id of tweet currently open in detail
+let memoComposeReplyTo = null; // {dateKey, tweetId} | null
+
+/* --- Helpers --- */
+function findTweet(id) {
+  for (const key of Object.keys(memos)) {
+    const list = memos[key] || [];
+    const t = list.find(m => m.id === id);
+    if (t) return { tweet: t, dateKey: key };
+  }
+  return null;
+}
+
+function twDateStr(isoStr) {
+  const d = new Date(isoStr);
+  const yy = d.getFullYear();
+  const mo = d.getMonth() + 1;
+  const dd = d.getDate();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  return `${yy}년 ${mo}월 ${dd}일 · 오전 ${d.getHours() < 12 ? '' : ''}${hh}:${mm}`;
+}
+
+function twShortTime(isoStr) {
+  const d = new Date(isoStr);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+/* --- Day navigation (same as before) --- */
 function changeMemoDay(delta) {
   const d = keyToDate(viewingMemoDateKey);
   d.setDate(d.getDate() + delta);
@@ -2237,103 +2571,270 @@ function renderMemoHeader() {
   document.getElementById('memoTodayJumpBtn').classList.toggle('hidden', isToday);
 }
 
-function autoGrowMemoInput(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(100, el.scrollHeight) + 'px';
+/* --- Switch views --- */
+function setTwView(v) {
+  twView = v;
+  const timeline = document.getElementById('twTimeline');
+  const detail   = document.getElementById('twDetail');
+  const bookmark = document.getElementById('twBookmarkFeed');
+  const hdrTimeline = document.getElementById('twViewTimeline');
+  const hdrDetail   = document.getElementById('twViewDetail');
+  const hdrBookmark = document.getElementById('twViewBookmark');
+
+  timeline.classList.toggle('hidden', v !== 'timeline');
+  detail.classList.toggle('hidden', v !== 'detail');
+  bookmark.classList.toggle('hidden', v !== 'bookmark');
+  hdrTimeline.classList.toggle('hidden', v !== 'timeline');
+  hdrDetail.classList.toggle('hidden', v !== 'detail');
+  hdrBookmark.classList.toggle('hidden', v !== 'bookmark');
 }
 
-function handleMemoKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMemo();
-  }
+/* --- Render timeline --- */
+function renderMemos() {
+  renderMemoTimeline();
 }
 
-function sendMemo() {
-  const input = document.getElementById('memoInput');
-  const text = input.value.trim();
-  if (!text) return;
-  if (!memos[viewingMemoDateKey]) memos[viewingMemoDateKey] = [];
-  memos[viewingMemoDateKey].push({ id: Date.now() + Math.floor(Math.random()*1000), text, time: new Date().toISOString() });
-  saveMemos();
-  input.value = '';
-  input.style.height = 'auto';
-  renderMemos();
-}
-
-function copyMemo(id) {
+function renderMemoTimeline() {
+  const el = document.getElementById('twTimeline');
   const list = memos[viewingMemoDateKey] || [];
-  const m = list.find(x => x.id === id);
-  if (!m) return;
+  if (!list.length) {
+    el.innerHTML = `<div class="tw-empty"><strong>아직 없어요</strong><span>오늘 있었던 일을 기록해보세요</span></div>`;
+    return;
+  }
+  el.innerHTML = list.map(m => renderTweetCard(m, viewingMemoDateKey)).join('');
+}
+
+function renderTweetCard(m, dateKey) {
+  const isBookmarked = memoBookmarks.includes(m.id);
+  const replyCount = (m.replies || []).length;
+  return `<div class="tw-tweet${replyCount ? ' has-replies' : ''}" onclick="openTweetDetail(${m.id})">
+    <div class="tw-tweet-content">${esc(m.text)}</div>
+    <div class="tw-tweet-meta">${twDateStr(m.time)}</div>
+    <div class="tw-tweet-actions" onclick="event.stopPropagation()">
+      <button class="tw-action-btn reply" onclick="openMemoCompose(${m.id})" title="답글">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        ${replyCount > 0 ? `<span>${replyCount}</span>` : ''}
+      </button>
+      <button class="tw-action-btn bookmark${isBookmarked ? ' active' : ''}" onclick="toggleMemoBookmark(${m.id})" title="북마크">
+        <svg viewBox="0 0 24 24" fill="${isBookmarked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <button class="tw-action-btn copy" onclick="copyMemo(${m.id})" title="복사">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+      <button class="tw-action-btn delete" onclick="deleteMemo(${m.id})" title="삭제">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      </button>
+    </div>
+  </div>`;
+}
+
+/* --- Tweet detail --- */
+function openTweetDetail(id) {
+  const found = findTweet(id);
+  if (!found) return;
+  twDetailId = id;
+  setTwView('detail');
+  renderTweetDetail();
+}
+
+function closeTweetDetail() {
+  twDetailId = null;
+  setTwView('timeline');
+}
+
+function renderTweetDetail() {
+  const found = findTweet(twDetailId);
+  if (!found) return;
+  const { tweet: m, dateKey } = found;
+  const isBookmarked = memoBookmarks.includes(m.id);
+  const replies = m.replies || [];
+
+  const el = document.getElementById('twDetail');
+  el.innerHTML = `
+    <div class="tw-detail-main">
+      <div class="tw-detail-text">${esc(m.text)}</div>
+      <div class="tw-detail-meta">${twDateStr(m.time)}</div>
+      <div class="tw-detail-actions">
+        <button class="tw-action-btn reply" onclick="openMemoCompose(${m.id})" title="답글">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          ${replies.length > 0 ? `<span>${replies.length}</span>` : ''}
+        </button>
+        <button class="tw-action-btn bookmark${isBookmarked ? ' active' : ''}" onclick="toggleMemoBookmark(${m.id})" title="북마크">
+          <svg viewBox="0 0 24 24" fill="${isBookmarked ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button class="tw-action-btn copy" onclick="copyMemo(${m.id})" title="복사">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+        <button class="tw-action-btn delete" onclick="deleteMemo(${m.id})" title="삭제">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+        </button>
+      </div>
+    </div>
+    ${replies.length ? `<div class="tw-reply-label">답글 ${replies.length}개</div>` : ''}
+    ${replies.map(r => `
+      <div class="tw-reply-card">
+        <div class="tw-reply-text">${esc(r.text)}</div>
+        <div class="tw-reply-meta">${twDateStr(r.time)}</div>
+        <div class="tw-reply-actions">
+          <button class="tw-action-btn copy" onclick="copyReply(${m.id}, ${r.id})" title="복사">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button class="tw-action-btn delete" onclick="deleteReply(${m.id}, ${r.id})" title="삭제">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          </button>
+        </div>
+      </div>
+    `).join('')}
+  `;
+}
+
+/* --- Bookmarks --- */
+function openMemoBookmarks() {
+  setTwView('bookmark');
+  renderMemoBookmarks();
+}
+
+function closeMemoBookmarks() {
+  setTwView('timeline');
+}
+
+function toggleMemoBookmark(id) {
+  const idx = memoBookmarks.indexOf(id);
+  if (idx >= 0) {
+    memoBookmarks.splice(idx, 1);
+  } else {
+    memoBookmarks.push(id);
+  }
+  saveMemoBookmarks();
+  // Re-render wherever we are
+  if (twView === 'timeline') renderMemoTimeline();
+  else if (twView === 'detail') renderTweetDetail();
+  else if (twView === 'bookmark') renderMemoBookmarks();
+}
+
+function renderMemoBookmarks() {
+  const el = document.getElementById('twBookmarkFeed');
+  if (!memoBookmarks.length) {
+    el.innerHTML = `<div class="tw-empty"><strong>북마크가 없어요</strong><span>중요한 게시물을 저장해두세요</span></div>`;
+    return;
+  }
+  const cards = memoBookmarks.map(id => {
+    const found = findTweet(id);
+    if (!found) return '';
+    return renderTweetCard(found.tweet, found.dateKey);
+  }).filter(Boolean);
+  el.innerHTML = cards.length ? cards.join('') : `<div class="tw-empty"><strong>북마크가 없어요</strong></div>`;
+}
+
+/* --- Compose popup --- */
+function openMemoCompose(replyToId) {
+  memoComposeReplyTo = replyToId ? { id: replyToId } : null;
+  const hint = document.getElementById('memoComposeReplyHint');
+  const ta   = document.getElementById('memoComposeInput');
+  if (replyToId) {
+    hint.textContent = '답글 달기';
+    hint.classList.remove('hidden');
+  } else {
+    hint.textContent = '';
+    hint.classList.add('hidden');
+  }
+  ta.value = '';
+  document.getElementById('memoComposeCharCount').textContent = '0 / 280';
+  openOverlay('memoComposeOverlay');
+  setTimeout(() => ta.focus(), 150);
+  ta.oninput = () => {
+    document.getElementById('memoComposeCharCount').textContent = `${ta.value.length} / 280`;
+  };
+}
+
+function submitMemoCompose() {
+  const ta = document.getElementById('memoComposeInput');
+  const text = ta.value.trim();
+  if (!text) return;
+  if (text.length > 280) { showToast('280자 이내로 입력해주세요'); return; }
+
+  if (memoComposeReplyTo) {
+    // Add reply to tweet
+    const found = findTweet(memoComposeReplyTo.id);
+    if (found) {
+      if (!found.tweet.replies) found.tweet.replies = [];
+      found.tweet.replies.push({ id: Date.now() + Math.floor(Math.random()*1000), text, time: new Date().toISOString() });
+      saveMemos();
+    }
+  } else {
+    // New top-level tweet
+    if (!memos[viewingMemoDateKey]) memos[viewingMemoDateKey] = [];
+    memos[viewingMemoDateKey].push({ id: Date.now() + Math.floor(Math.random()*1000), text, time: new Date().toISOString(), replies: [], bookmarked: false });
+    saveMemos();
+  }
+
+  closeOverlay('memoComposeOverlay');
+  memoComposeReplyTo = null;
+
+  // Re-render
+  if (twView === 'timeline') renderMemoTimeline();
+  else if (twView === 'detail') renderTweetDetail();
+}
+
+/* --- Copy / Delete --- */
+function copyMemo(id) {
+  const found = findTweet(id);
+  if (!found) return;
+  const text = found.tweet.text;
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(m.text).then(() => showToast('복사했어요')).catch(() => showToast('복사에 실패했어요'));
+    navigator.clipboard.writeText(text).then(() => showToast('복사했어요')).catch(() => showToast('복사에 실패했어요'));
   } else {
     showToast('복사를 지원하지 않는 환경이에요');
   }
 }
 
 function deleteMemo(id) {
-  if (!memos[viewingMemoDateKey]) return;
-  memos[viewingMemoDateKey] = memos[viewingMemoDateKey].filter(x => x.id !== id);
+  const found = findTweet(id);
+  if (!found) return;
+  memos[found.dateKey] = memos[found.dateKey].filter(m => m.id !== id);
+  // Remove from bookmarks too
+  const bi = memoBookmarks.indexOf(id);
+  if (bi >= 0) { memoBookmarks.splice(bi, 1); saveMemoBookmarks(); }
   saveMemos();
-  renderMemos();
+  if (twView === 'detail') { closeTweetDetail(); }
+  else if (twView === 'timeline') renderMemoTimeline();
+  else if (twView === 'bookmark') renderMemoBookmarks();
 }
 
-function renderMemos() {
-  const el = document.getElementById('memoList');
-  const list = memos[viewingMemoDateKey] || [];
-  if (!list.length) {
-    el.innerHTML = `<div class="memo-empty">이 날의 메모가 없어요</div>`;
-    return;
+function copyReply(tweetId, replyId) {
+  const found = findTweet(tweetId);
+  if (!found) return;
+  const r = (found.tweet.replies || []).find(x => x.id === replyId);
+  if (!r) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(r.text).then(() => showToast('복사했어요')).catch(() => showToast('복사에 실패했어요'));
   }
-  el.innerHTML = list.map(m => {
-    const t = new Date(m.time);
-    const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
-    return `<div class="memo-bubble">
-      <div class="memo-text">${esc(m.text)}</div>
-      <div class="memo-meta-row">
-        <span class="memo-time">${timeStr}</span>
-        <button class="memo-copy-btn" onclick="copyMemo(${m.id})">복사</button>
-        <button class="memo-delete-btn" onclick="deleteMemo(${m.id})">삭제</button>
-      </div>
-    </div>`;
-  }).join('');
-  el.scrollTop = el.scrollHeight;
 }
+
+function deleteReply(tweetId, replyId) {
+  const found = findTweet(tweetId);
+  if (!found) return;
+  found.tweet.replies = (found.tweet.replies || []).filter(x => x.id !== replyId);
+  saveMemos();
+  if (twView === 'detail') renderTweetDetail();
+}
+
+/* --- Legacy stubs (used by watch-memo, import/export) --- */
+function autoGrowMemoInput(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(100, el.scrollHeight) + 'px';
+}
+function sendMemo() {} // replaced by submitMemoCompose
 
 /* =========================================================
    YESTERDAY FEEDBACK
    ========================================================= */
 function computeDayScore(dayKey) {
+  // 절대 점수 시스템: 각 블록 타입별 고정 점수
   const day = days[dayKey];
   if (!day) return null;
-  const scorable = day.blocks.filter(b => b.progressType !== 'none');
   const totalFocusMs = dayTotalFocusMs(day);
-  const focusWeight = weights.focus ?? 0;
-  const watchWeight = weights.watch ?? 0;
-  const watchFrac = dayWatchScoreFraction(day);
-  let weightedSum = 0, weightTotal = 0;
-  scorable.forEach(b => {
-    const w = weights[b.type] ?? 25;
-    weightedSum += w * blockDayFraction(b, dayKey);
-    weightTotal += w;
-  });
-  if (focusWeight > 0) {
-    const focusFrac = Math.min(1, totalFocusMs / getFocusGoalMs());
-    weightedSum += focusWeight * focusFrac;
-    weightTotal += focusWeight;
-  }
-  if (watchWeight > 0 && watchFrac !== null) {
-    weightedSum += watchWeight * watchFrac;
-    weightTotal += watchWeight;
-  }
-  const baseScore = weightTotal > 0 ? Math.round((weightedSum / weightTotal) * 100) : null;
-  let overBonus = 0;
-  if (weightTotal > 0) {
-    scorable.forEach(b => { overBonus += blockOverAchieveBonus(b); });
-    overBonus = Math.round((overBonus / weightTotal) * 100);
-  }
-  const score = baseScore !== null ? Math.max(0, baseScore) + overBonus : null;
+  const score = Math.round(calcDayAbsScore(day) * 10) / 10;
   return { score, blocks: day.blocks, watchBlocks: day.watchBlocks || [], totalFocusMs };
 }
 
@@ -2351,7 +2852,7 @@ function openYesterdayFeedback() {
   }
 
   const lines = [];
-  lines.push(`어제(${yKey}) 달성 점수: ${data.score !== null ? data.score + '/100' : '집계할 수 없음'}`);
+  lines.push(`어제(${yKey}) 달성 점수: ${data.score !== null ? data.score + 'pt' : '집계할 수 없음'}`);
   if (data.totalFocusMs > 0) lines.push(`집중시간: ${formatDurationShort(data.totalFocusMs)}`);
   if (hasBlocks) {
     lines.push('');
@@ -2377,10 +2878,10 @@ function openYesterdayFeedback() {
   const score = data.score;
   let summary;
   if (score === null) summary = '어제는 진행 체크가 있는 블록이 없어서 점수를 매기긴 어렵지만, 기록을 남긴 것 자체로 의미가 있어요.';
-  else if (score >= 90) summary = `어제는 ${score}점으로 정말 알찬 하루였어요. 계획한 것들을 거의 다 해냈네요. 오늘도 이 흐름을 이어가 보세요.`;
-  else if (score >= 70) summary = `어제는 ${score}점으로 꽤 잘 보낸 하루였어요. 몇 가지가 남았지만 전반적으로 좋은 흐름이었어요.`;
-  else if (score >= 40) summary = `어제는 ${score}점으로 절반 정도 진행됐어요. 무리한 계획이었는지, 컨디션 문제였는지 한번 돌아보면 오늘 도움이 될 거예요.`;
-  else if (score > 0) summary = `어제는 ${score}점으로 시작 단계에 머물렀어요. 괜찮아요, 오늘은 부담을 좀 줄여서 작은 것 하나부터 해보는 것도 방법이에요.`;
+  else if (score >= 30) summary = `어제는 ${score}pt로 정말 알찬 하루였어요. 계획한 것들을 거의 다 해냈네요. 오늘도 이 흐름을 이어가 보세요.`;
+  else if (score >= 20) summary = `어제는 ${score}pt로 꽤 잘 보낸 하루였어요. 몇 가지가 남았지만 전반적으로 좋은 흐름이었어요.`;
+  else if (score >= 10) summary = `어제는 ${score}pt로 절반 정도 진행됐어요. 무리한 계획이었는지, 컨디션 문제였는지 한번 돌아보면 오늘 도움이 될 거예요.`;
+  else if (score > 0) summary = `어제는 ${score}pt로 시작 단계에 머물렀어요. 괜찮아요, 오늘은 부담을 좀 줄여서 작은 것 하나부터 해보는 것도 방법이에요.`;
   else summary = '어제는 거의 진행되지 못한 하루였어요. 너무 자책하지 말고, 오늘 할 일을 좀 더 작은 단위로 쪼개보는 게 도움이 될 수 있어요.';
   summary += watchSummaryLine;
 
@@ -2421,7 +2922,7 @@ function saveMenuSettings() {
 }
 
 function exportBackup() {
-  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, exportedAt: new Date().toISOString() };
+  const data = { days, weights, carryoverMeta, watchChainMeta, memos, memoBookmarks, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, listBlocks, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2447,10 +2948,12 @@ function importBackup(e) {
       carryoverMeta = (data.carryoverMeta && typeof data.carryoverMeta === 'object') ? data.carryoverMeta : carryoverMeta;
       watchChainMeta = (data.watchChainMeta && typeof data.watchChainMeta === 'object') ? data.watchChainMeta : watchChainMeta;
       memos = (data.memos && typeof data.memos === 'object') ? data.memos : memos;
+      if (Array.isArray(data.memoBookmarks)) { memoBookmarks = data.memoBookmarks; saveMemoBookmarks(); }
       if (typeof data.gamePoints === 'number') gamePoints = data.gamePoints;
       if (data.gameAddedScores && typeof data.gameAddedScores === 'object') gameAddedScores = data.gameAddedScores;
       if (Array.isArray(data.gameSpendLog)) gameSpendLog = data.gameSpendLog;
       if (Array.isArray(data.planBlocks)) planBlocks = data.planBlocks;
+      if (Array.isArray(data.listBlocks)) { listBlocks = data.listBlocks; saveListBlocks(); }
       if (Array.isArray(data.periodPlans)) periodPlans = data.periodPlans;
       saveDays(); saveWeightsToStorage(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); saveGamePoints();
       savePlanBlocks(); savePeriodPlans();
@@ -2506,6 +3009,8 @@ renderDayHeader();
 renderBlocks();
 renderScore();
 renderGamePoints();
+// memo tab init (not active by default, but set up the view state)
+setTwView('timeline');
 
 // 진행 중인 타이머가 있으면 (예: 앱을 닫았다 다시 열었을 때) 화면 갱신을 위해
 // 항상 tick 인터벌을 켜둔다. 타이머 시트가 열려있지 않으면 timerTick 내부에서
