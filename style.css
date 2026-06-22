@@ -35,6 +35,8 @@ button {
   --type-watch-etc-border: #bdbdbd;
   --type-unspecified-bg: #f3f3f3;    /* light neutral for "unspecified" */
   --type-unspecified-border: #cfcfcf;
+  --type-abstain-bg: #1a1a1a;        /* 절제 — 검정 배경, 흰 글씨로 시각적 경고감 */
+  --type-abstain-border: #000;
 
   /* Heatmap intensity (uses routine lavender hue) */
   --hm-empty: #ececec;
@@ -159,6 +161,42 @@ html, body {
 .block-card.type-leisure { background: var(--type-leisure-bg); border-color: var(--type-leisure-border); }
 .block-card.type-routine { background: var(--type-routine-bg); border-color: var(--type-routine-border); }
 .block-card.type-unspecified { background: var(--type-unspecified-bg); border-color: var(--type-unspecified-border); }
+
+/* 절제(abstain) — 검정 배경 + 흰 글씨로 다른 유형과 확실히 구분되는 경고 느낌 */
+.block-card.type-abstain {
+  background: var(--type-abstain-bg);
+  border-color: var(--type-abstain-border);
+  color: var(--white);
+}
+.block-card.type-abstain .card-sub,
+.block-card.type-abstain .block-desc,
+.block-card.type-abstain .counter-pct,
+.block-card.type-abstain .fraction span,
+.block-card.type-abstain .time-chip,
+.block-card.type-abstain .toggle-label { color: rgba(255,255,255,0.72); }
+.block-card.type-abstain .type-chip,
+.block-card.type-abstain .carryover-chip { background: rgba(255,255,255,0.16); color: var(--white); }
+.block-card.type-abstain .icon-btn,
+.block-card.type-abstain .timer-icon-btn,
+.block-card.type-abstain .ctrl-btn,
+.block-card.type-abstain .toggle-check { border-color: var(--white); color: var(--white); }
+.block-card.type-abstain .ctrl-btn:active { background: rgba(255,255,255,0.16); }
+.block-card.type-abstain .icon-btn svg,
+.block-card.type-abstain .timer-icon-btn svg { stroke: var(--white); }
+.block-card.type-abstain .timer-icon-btn.has-time { background: var(--white); }
+.block-card.type-abstain .timer-icon-btn.has-time svg { stroke: var(--black); }
+.block-card.type-abstain .toggle-check.done { background: var(--white); }
+.block-card.type-abstain .toggle-check.done svg { stroke: var(--black); }
+.block-card.type-abstain .prog-bar { background: rgba(255,255,255,0.18); }
+.block-card.type-abstain .prog-fill { background: var(--white); }
+.block-card.type-abstain .reorder-handle { color: rgba(255,255,255,0.6); }
+.block-card.type-abstain .move-btn { background: rgba(255,255,255,0.12); border-color: var(--white); }
+.block-card.type-abstain .move-btn svg { stroke: var(--white); }
+.abstain-timer-btn { border: 1.5px solid currentColor; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.abstain-timer-btn svg { width: 14px; height: 14px; }
+.abstain-timer-btn.running { background: rgba(255,255,255,0.16); }
+.abstain-over-badge { font-size: 11px; font-weight: 700; color: #ff6b6b; flex-shrink: 0; }
+.prog-fill-abstain-over { background: #ff6b6b !important; }
 
 .period-card { border-style: dashed; }
 .period-date-range { font-size: 12px; color: var(--gray-600); font-weight: 600; margin-bottom: 4px; }

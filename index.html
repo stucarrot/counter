@@ -181,6 +181,7 @@
         <button class="seg-btn" data-val="todo" onclick="selectSeg('bfTypeGroup',this)">할일</button>
         <button class="seg-btn" data-val="leisure" onclick="selectSeg('bfTypeGroup',this)">여가</button>
         <button class="seg-btn" data-val="routine" onclick="selectSeg('bfTypeGroup',this)">루틴</button>
+        <button class="seg-btn" data-val="abstain" onclick="selectSeg('bfTypeGroup',this)">절제</button>
       </div>
     </div>
 
@@ -217,15 +218,25 @@
       <div class="seg-group" id="bfProgressGroup">
         <button class="seg-btn" data-val="counter" onclick="selectSeg('bfProgressGroup',this); toggleCounterFields()">카운터</button>
         <button class="seg-btn" data-val="toggle" onclick="selectSeg('bfProgressGroup',this); toggleCounterFields()">완료 토글</button>
+        <button class="seg-btn hidden" id="bfProgressTimerBtn" data-val="timer" onclick="selectSeg('bfProgressGroup',this); toggleCounterFields()">시간재기</button>
         <button class="seg-btn" data-val="none" onclick="selectSeg('bfProgressGroup',this); toggleCounterFields()">없음</button>
       </div>
     </div>
 
     <div class="field hidden" id="bfCounterFields">
-      <label>목표 수</label>
+      <label id="bfTotalLabel">목표 수</label>
       <input type="number" id="bfTotal" placeholder="예: 5" min="1" max="9999" inputmode="numeric">
       <label style="margin-top:10px;">현재 진행 수</label>
       <input type="number" id="bfCurrent" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
+    </div>
+
+    <div class="field hidden" id="bfTimerLimitFields">
+      <label>소모 시간 상한</label>
+      <div class="split-total-row">
+        <input type="number" id="bfTimerLimitMinutes" placeholder="예: 60" min="1" max="9999" inputmode="numeric" style="width:100px;">
+        <span class="split-label-text">분</span>
+      </div>
+      <p style="font-size:12px;color:#888;margin:6px 0 0;">이 시간을 넘기면 점수에서 절제 감점값이 한 번에 빠져요.</p>
     </div>
 
     <div class="field" id="bfCarryoverField">
@@ -586,6 +597,7 @@
     <div class="weight-row"><span>집중시간</span><input type="number" id="wFocus" min="0" max="999" step="0.5"></div>
     <div class="weight-row"><span>감상</span><input type="number" id="wWatch" min="0" max="999" step="0.5"></div>
     <div class="weight-row"><span>미지정</span><input type="number" id="wUnspecified" min="0" max="999" step="0.5"></div>
+    <div class="weight-row"><span>절제 (감점)</span><input type="number" id="wAbstain" min="0" max="999" step="0.5"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('menuOverlay')">닫기</button>
       <button class="btn-save" onclick="saveMenuSettings()">저장</button>

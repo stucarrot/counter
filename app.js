@@ -57,6 +57,9 @@ let carryoverMeta = JSON.parse(localStorage.getItem('pc_carryover_meta') || '{}'
 let watchChainMeta = JSON.parse(localStorage.getItem('pc_watch_chain_meta') || '{}');
 let memos = JSON.parse(localStorage.getItem('pc_memos') || '{}');
 let activeTimer = JSON.parse(localStorage.getItem('pc_active_timer') || 'null');
+// 절제(abstain) 블록 전용 시간재기 — 보조 집중타이머(activeTimer)와는 완전히 별개라
+// 동시에 둘 다 돌릴 수 있다. 일시정지 없이 단순 시작/정지만 지원 (카드에서 원클릭 조작).
+let activeAbstainTimers = JSON.parse(localStorage.getItem('pc_active_abstain_timers') || '{}'); // { [blockId]: { dateKey, startedAt } }
 let gamePoints = parseFloat(localStorage.getItem('pc_game_points') || '0');
 let gameAddedScores = JSON.parse(localStorage.getItem('pc_game_added_scores') || '{}');
 let gameSpendLog = JSON.parse(localStorage.getItem('pc_game_spend_log') || '[]');
@@ -95,7 +98,7 @@ let viewingDateKey = TODAY_KEY();
 viewingMemoDateKey = TODAY_KEY();
 viewingWatchDateKey = TODAY_KEY();
 
-const TYPE_LABEL = { schedule: '일정', once: '일회성', todo: '할일', leisure: '여가', routine: '루틴', unspecified: '미지정' };
+const TYPE_LABEL = { schedule: '일정', once: '일회성', todo: '할일', leisure: '여가', routine: '루틴', unspecified: '미지정', abstain: '절제' };
 const TIME_LABEL = { morning: '오전', afternoon: '오후', night: '밤' };
 const WATCH_TYPE_LABEL = { book: '독서', movie: '영화', etc: '기타' };
 
@@ -114,6 +117,9 @@ function savePeriodPlans() { localStorage.setItem('pc_period_plans', JSON.string
 function saveActiveTimer() {
   if (activeTimer) localStorage.setItem('pc_active_timer', JSON.stringify(activeTimer));
   else localStorage.removeItem('pc_active_timer');
+}
+function saveActiveAbstainTimers() {
+  localStorage.setItem('pc_active_abstain_timers', JSON.stringify(activeAbstainTimers));
 }
 function saveGamePoints() {
   localStorage.setItem('pc_game_points', String(gamePoints));
@@ -154,6 +160,7 @@ function showToast(msg) {
    TAB SWITCHING
    ========================================================= */
 function switchTab(tab) {
+  checkMidnightRollover(); // 탭을 바꿔서 볼 때마다 날짜가 넘어가 있었는지 한 번 더 확인 (이월 누락 방지)
   currentTab = tab;
   ['plan','todo','watch','memo','game'].forEach(t => {
     document.getElementById(`tabBtn-${t}`).classList.toggle('active', tab === t);
@@ -255,10 +262,41 @@ function onTypeChanged() {
     carryoverField.classList.add('hidden');
     checkbox.checked = true;
     intervalField.classList.remove('hidden');
+  } else if (selectedType === 'abstain') {
+    // 절제는 "이행"이 아니라 매일 자동으로 새로 시작 — 체크박스 자체가 의미 없어 숨김
+    carryoverField.classList.add('hidden');
+    checkbox.checked = false;
+    intervalField.classList.add('hidden');
   } else {
     carryoverField.classList.remove('hidden');
     intervalField.classList.add('hidden');
   }
+
+  const timerBtn = document.getElementById('bfProgressTimerBtn');
+  const toggleBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="toggle"]');
+  const noneBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="none"]');
+  const totalLabel = document.getElementById('bfTotalLabel');
+  if (selectedType === 'abstain') {
+    // 절제는 "카운터(상한)" 또는 "시간재기(상한)"만 가능 — 완료토글/없음은 의미가 없어 숨김
+    timerBtn.classList.remove('hidden');
+    toggleBtn.classList.add('hidden');
+    noneBtn.classList.add('hidden');
+    totalLabel.textContent = '상한 수';
+    if (selectedProgress === 'toggle' || selectedProgress === 'none' || !selectedProgress) {
+      selectedProgress = 'counter';
+      document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === 'counter'));
+    }
+  } else {
+    timerBtn.classList.add('hidden');
+    toggleBtn.classList.remove('hidden');
+    noneBtn.classList.remove('hidden');
+    totalLabel.textContent = '목표 수';
+    if (selectedProgress === 'timer') {
+      selectedProgress = null;
+      document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(b => b.classList.remove('selected'));
+    }
+  }
+  toggleCounterFields();
 }
 
 function toggleCustomTime() {
@@ -312,6 +350,7 @@ function renderSplitDateRows() {
 
 function toggleCounterFields() {
   document.getElementById('bfCounterFields').classList.toggle('hidden', selectedProgress !== 'counter');
+  document.getElementById('bfTimerLimitFields').classList.toggle('hidden', selectedProgress !== 'timer');
 }
 
 function resetTypeSegDisabled() {
@@ -325,14 +364,20 @@ function openBlockAdd() {
   document.getElementById('bfDesc').value = '';
   document.getElementById('bfTotal').value = '';
   document.getElementById('bfCurrent').value = '0';
+  document.getElementById('bfTotalLabel').textContent = '목표 수';
+  document.getElementById('bfTimerLimitMinutes').value = '';
   document.getElementById('bfCustomTime').value = '';
   document.getElementById('bfCustomTime').classList.add('hidden');
   document.getElementById('bfCounterFields').classList.add('hidden');
+  document.getElementById('bfTimerLimitFields').classList.add('hidden');
   document.getElementById('bfSplitFields').classList.add('hidden');
   document.getElementById('bfCarryover').checked = false;
   document.getElementById('bfCarryoverField').classList.remove('hidden');
   document.getElementById('bfIntervalDays').value = '1';
   document.getElementById('bfIntervalField').classList.add('hidden');
+  document.getElementById('bfProgressTimerBtn').classList.add('hidden');
+  document.querySelector('#bfProgressGroup .seg-btn[data-val="toggle"]').classList.remove('hidden');
+  document.querySelector('#bfProgressGroup .seg-btn[data-val="none"]').classList.remove('hidden');
   selectedType = null; selectedTime = 'none'; selectedProgress = null;
   splitDates = [];
   renderSplitDateRows();
@@ -362,6 +407,22 @@ function openBlockEdit(id) {
   document.querySelectorAll('#bfTimeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === (b.time || 'none')));
   document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === b.progressType));
 
+  const timerBtn = document.getElementById('bfProgressTimerBtn');
+  const toggleBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="toggle"]');
+  const noneBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="none"]');
+  const totalLabel = document.getElementById('bfTotalLabel');
+  if (b.type === 'abstain') {
+    timerBtn.classList.remove('hidden');
+    toggleBtn.classList.add('hidden');
+    noneBtn.classList.add('hidden');
+    totalLabel.textContent = '상한 수';
+  } else {
+    timerBtn.classList.add('hidden');
+    toggleBtn.classList.remove('hidden');
+    noneBtn.classList.remove('hidden');
+    totalLabel.textContent = '목표 수';
+  }
+
   const customTimeInput = document.getElementById('bfCustomTime');
   if (b.time === 'custom') { customTimeInput.classList.remove('hidden'); customTimeInput.value = b.customTime || ''; }
   else customTimeInput.classList.add('hidden');
@@ -377,6 +438,11 @@ function openBlockEdit(id) {
     document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => { btn.disabled = false; });
   }
   renderSplitDateRows();
+
+  document.getElementById('bfTimerLimitFields').classList.toggle('hidden', b.progressType !== 'timer');
+  if (b.progressType === 'timer') {
+    document.getElementById('bfTimerLimitMinutes').value = b.limitMinutes || '';
+  }
 
   if (b.progressType === 'counter') {
     if (isSplit) {
@@ -396,6 +462,9 @@ function openBlockEdit(id) {
     document.getElementById('bfCarryoverField').classList.add('hidden');
     document.getElementById('bfIntervalField').classList.remove('hidden');
     document.getElementById('bfIntervalDays').value = b.intervalDays || 1;
+  } else if (b.type === 'abstain') {
+    document.getElementById('bfCarryoverField').classList.add('hidden');
+    document.getElementById('bfIntervalField').classList.add('hidden');
   } else {
     document.getElementById('bfCarryoverField').classList.remove('hidden');
     document.getElementById('bfIntervalField').classList.add('hidden');
@@ -414,7 +483,7 @@ function submitBlockForm() {
   // 시간대는 선택 사항 — selectedTime이 null이어도 통과
 
   const customTime = selectedTime === 'custom' ? document.getElementById('bfCustomTime').value : '';
-  let total = null, current = null;
+  let total = null, current = null, limitMinutes = null;
   if (selectedProgress === 'counter') {
     total = selectedTime === 'split'
       ? (parseInt(document.getElementById('bfSplitTotal').value) || 0)
@@ -426,13 +495,22 @@ function submitBlockForm() {
       return;
     }
     current = Math.max(0, current);
+  } else if (selectedProgress === 'timer') {
+    limitMinutes = parseInt(document.getElementById('bfTimerLimitMinutes').value);
+    if (!limitMinutes || limitMinutes < 1) {
+      document.getElementById('bfTimerLimitMinutes').focus();
+      return;
+    }
   }
 
   const isSplit = selectedTime === 'split';
   const savedSplitDates = isSplit ? splitDates.filter(sd => sd.date).map(sd => ({ ...sd })) : [];
 
   const isRoutineType = selectedType === 'routine';
-  const wantsCarryover = isRoutineType || isSplit || document.getElementById('bfCarryover').checked;
+  const isAbstainType = selectedType === 'abstain';
+  // 절제는 "이행"이 아니라 매일 새로 시작하는 자동 반복 — 루틴과 같은 carryover 체인 메커니즘을
+  // 그대로 쓰지만, 의미상 "이어가기"가 아니라 "매일 0부터 다시 측정"이라는 점이 다르다.
+  const wantsCarryover = isRoutineType || isAbstainType || isSplit || document.getElementById('bfCarryover').checked;
   const intervalDays = isRoutineType ? Math.max(1, parseInt(document.getElementById('bfIntervalDays').value) || 1) : null;
 
   const day = ensureDay(viewingDateKey);
@@ -445,8 +523,9 @@ function submitBlockForm() {
       // 루틴 ↔ 비루틴 전환은 막는다 (openBlockEdit에서 버튼 disabled 처리됨)
       b.type = b.type === 'routine' ? 'routine' : selectedType;
 
-      if (selectedProgress === 'counter') { b.total = total; b.current = current; }
-      else if (selectedProgress === 'toggle') { if (b.done === undefined) b.done = false; }
+      if (selectedProgress === 'counter') { b.total = total; b.current = current; delete b.limitMinutes; }
+      else if (selectedProgress === 'toggle') { if (b.done === undefined) b.done = false; delete b.limitMinutes; }
+      else if (selectedProgress === 'timer') { b.limitMinutes = limitMinutes; if (!b.sessions) b.sessions = []; if (!b.abstainSessions) b.abstainSessions = []; delete b.total; delete b.current; }
       if (isSplit) b.splitDates = savedSplitDates; else delete b.splitDates;
 
       if (b.type === 'routine') {
@@ -466,6 +545,7 @@ function submitBlockForm() {
     };
     if (selectedProgress === 'counter') { block.total = total; block.current = current; }
     if (selectedProgress === 'toggle') { block.done = false; }
+    if (selectedProgress === 'timer') { block.limitMinutes = limitMinutes; block.abstainSessions = []; }
     if (isSplit) block.splitDates = savedSplitDates;
     if (isRoutineType) {
       block.intervalDays = intervalDays;
@@ -502,9 +582,11 @@ function askDeleteBlock(id) {
   if (!b) return;
   deleteBlockId = id;
   const hasCarryover = !!b.carryover;
-  document.getElementById('confirmMsg').innerHTML = hasCarryover
-    ? `<strong>${esc(b.name)}</strong> 블록을 삭제할까요?<br>오늘 이후로 더 이상 자동으로 이어지지 않아요.`
-    : `<strong>${esc(b.name)}</strong> 블록을 삭제할까요?<br>이 작업은 되돌릴 수 없어요.`;
+  let msg;
+  if (b.type === 'abstain') msg = `<strong>${esc(b.name)}</strong> 블록을 삭제할까요?<br>오늘 이후로 더 이상 매일 자동으로 생성되지 않아요.`;
+  else if (hasCarryover) msg = `<strong>${esc(b.name)}</strong> 블록을 삭제할까요?<br>오늘 이후로 더 이상 자동으로 이어지지 않아요.`;
+  else msg = `<strong>${esc(b.name)}</strong> 블록을 삭제할까요?<br>이 작업은 되돌릴 수 없어요.`;
+  document.getElementById('confirmMsg').innerHTML = msg;
   document.getElementById('confirmOkBtn').onclick = () => {
     day.blocks = day.blocks.filter(x => x.id !== deleteBlockId);
     if (hasCarryover && b.carryoverId) {
@@ -515,6 +597,10 @@ function askDeleteBlock(id) {
     if (activeTimer && activeTimer.blockId === deleteBlockId) {
       activeTimer = null;
       saveActiveTimer();
+    }
+    if (activeAbstainTimers[deleteBlockId]) {
+      delete activeAbstainTimers[deleteBlockId];
+      saveActiveAbstainTimers();
     }
     saveDays(); renderBlocks(); renderScore(); closeOverlay('confirmOverlay');
   };
@@ -556,8 +642,18 @@ function blockProgressFraction(b) {
   return null;
 }
 
+// 절제(abstain) 블록이 그날 상한을 넘었는지 판정. 카운터형은 current > total,
+// 시간재기형은 누적 사용 시간(진행 중인 타이머 경과분 포함)이 limitMinutes를 넘었는지로 판단한다.
+function isAbstainOverLimit(b) {
+  if (b.progressType === 'counter') return (b.total > 0) && b.current > b.total;
+  if (b.progressType === 'timer') return abstainTimerTotalMs(b) > (b.limitMinutes || 0) * 60 * 1000;
+  return false;
+}
+
 // 초과달성 시 추가 점수 (절댓값 점수에 초과 비율을 곱한 보너스, 기본 점수에 추가로 더해짐)
+// 절제(abstain) 블록은 초과가 보너스가 아니라 감점 대상이므로 여기서는 항상 0.
 function blockOverAchieveBonus(b) {
+  if (b.type === 'abstain') return 0;
   if (b.progressType !== 'counter') return 0;
   if (b.current <= b.total || b.total <= 0) return 0;
   const overFrac = (b.current - b.total) / b.total; // 초과 비율
@@ -588,6 +684,7 @@ function blockDayFraction(b, dayKey) {
 }
 
 function isBlockComplete(b) {
+  if (b.type === 'abstain') return false; // 절제는 "완료"가 아니라 "초과(경고)" 상태로 별도 표시
   if (b.progressType === 'counter') return b.current >= b.total;
   if (b.progressType === 'toggle') return !!b.done;
   return false;
@@ -646,12 +743,13 @@ function syncCarryoversForToday() {
     // "매 n일마다" 루틴이고 오늘이 주기 날이 아니면 오늘 목록에 추가하지 않고 건너뜀 (쉬는 날)
     if (template.type === 'routine' && !isRoutineDueOn(template, todayKey)) return;
 
-    // 미완료 → 그날까지의 진행도를 그대로 들고 오늘로 복사 (루틴은 진행도 리셋, 이행은 유지)
+    // 미완료 → 그날까지의 진행도를 그대로 들고 오늘로 복사 (루틴/절제는 진행도 리셋, 이행은 유지)
     const nb = { ...template, id: Date.now() + Math.floor(Math.random()*100000) };
-    if (template.type === 'routine') {
-      // 루틴은 매일(또는 매 n일) 새로 시작하는 반복 — 진행도 리셋
+    if (template.type === 'routine' || template.type === 'abstain') {
+      // 루틴/절제는 매일(또는 매 n일) 새로 시작하는 반복 — 진행도 리셋
       if (nb.progressType === 'counter') nb.current = 0;
       if (nb.progressType === 'toggle') nb.done = false;
+      if (nb.progressType === 'timer') { nb.sessions = []; nb.abstainSessions = []; }
     }
     // 일반 이행 블록은 진행도를 그대로 유지 (그날까지 한 만큼 이어서)
     today.blocks.push(nb);
@@ -766,11 +864,14 @@ function renderBlocks() {
     const complete = isBlockComplete(b);
     let progressHtml = '';
     if (b.progressType === 'counter') {
+      const isAbstain = b.type === 'abstain';
       const pct = b.total > 0 ? Math.round(b.current / b.total * 100) : 0;
       const atMin = b.current <= 0;
       const overAchieved = b.current > b.total;
       const fillPct = Math.min(100, pct);
-      const overText = overAchieved ? `<span class="over-achieve-badge">+${b.current - b.total}</span>` : '';
+      const overText = overAchieved
+        ? (isAbstain ? `<span class="abstain-over-badge">상한 초과 +${b.current - b.total}</span>` : `<span class="over-achieve-badge">+${b.current - b.total}</span>`)
+        : '';
 
       // 쪼개기 수직선 마커 생성
       let splitMarkersHtml = '';
@@ -795,7 +896,7 @@ function renderBlocks() {
         <button class="ctrl-btn" style="width:32px;height:32px;font-size:18px;" onclick="changeBlockCounter(${b.id},1)" aria-label="증가">+</button>
         <span class="counter-pct">${pct}%</span>
         ${overText}
-        <div class="prog-wrap"><div class="prog-bar prog-bar-relative"><div class="prog-fill ${overAchieved?'prog-fill-over':''}" style="width:${fillPct}%"></div>${splitMarkersHtml}</div></div>
+        <div class="prog-wrap"><div class="prog-bar prog-bar-relative"><div class="prog-fill ${overAchieved?(isAbstain?'prog-fill-abstain-over':'prog-fill-over'):''}" style="width:${fillPct}%"></div>${splitMarkersHtml}</div></div>
       </div>`;
     } else if (b.progressType === 'toggle') {
       progressHtml = `<div class="block-progress-row">
@@ -804,12 +905,32 @@ function renderBlocks() {
         </button>
         <span class="toggle-label">${b.done ? '완료' : '미완료'}</span>
       </div>`;
+    } else if (b.progressType === 'timer') {
+      // 절제 전용 "시간재기형" — 카운터 대신 누적시간과 시작/정지 버튼이 바로 카드 본문에 뜬다.
+      // 보조 집중타이머(card-btns의 시계 아이콘)와는 별개의 세션 기록(abstainSessions)이라 동시/중복 실행이 가능하다.
+      const usedMs = abstainTimerTotalMs(b);
+      const limitMs = (b.limitMinutes || 0) * 60 * 1000;
+      const overLimit = limitMs > 0 && usedMs > limitMs;
+      const pct = limitMs > 0 ? Math.round(usedMs / limitMs * 100) : 0;
+      const fillPct = Math.min(100, pct);
+      const isRunning = !!activeAbstainTimers[b.id];
+      progressHtml = `<div class="block-progress-row">
+        <button class="ctrl-btn abstain-timer-btn ${isRunning ? 'running' : ''}" style="width:32px;height:32px;" onclick="${isRunning ? `stopAbstainTimer(${b.id})` : `startAbstainTimer(${b.id})`}" aria-label="${isRunning ? '정지' : '시작'}">
+          ${isRunning
+            ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20"/></svg>'}
+        </button>
+        <div class="fraction" style="font-size:16px;min-width:80px;"><span class="abstain-timer-display" data-over="${overLimit?'1':'0'}">${formatDurationShort(usedMs)}</span><span style="font-size:12px;"> / ${b.limitMinutes}분</span></div>
+        ${overLimit ? `<span class="abstain-over-badge">상한 초과</span>` : ''}
+        <div class="prog-wrap"><div class="prog-bar prog-bar-relative"><div class="prog-fill ${overLimit?'prog-fill-abstain-over':''}" style="width:${fillPct}%"></div></div></div>
+      </div>`;
     }
     const timeStr = timeLabelFor(b);
-    const carryoverBadge = (b.carryover && b.type !== 'routine') ? `<span class="carryover-chip">이행</span>` : '';
+    const carryoverBadge = (b.carryover && b.type !== 'routine' && b.type !== 'abstain') ? `<span class="carryover-chip">이행</span>` : '';
     const intervalBadge = (b.type === 'routine' && b.intervalDays > 1) ? `<span class="carryover-chip">매 ${b.intervalDays}일마다</span>` : '';
     const hasTime = blockTotalFocusMs(b) > 0 || (activeTimer && activeTimer.blockId === b.id);
     const isTimerActive = activeTimer && activeTimer.blockId === b.id && activeTimer.dateKey === viewingDateKey;
+    const isAbstainTimerActive = !!activeAbstainTimers[b.id];
     return `<div class="card block-card type-${b.type} ${complete && b.progressType!=='none' ? 'completed':''}" data-id="${b.id}">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -817,7 +938,7 @@ function renderBlocks() {
       <div class="card-main">
         <div class="card-header">
           <div class="card-title-wrap">
-            <div class="card-title">${esc(b.name)}${isTimerActive ? ' ⏱' : ''}</div>
+            <div class="card-title">${esc(b.name)}${isTimerActive || isAbstainTimerActive ? ' ⏱' : ''}</div>
             <div class="card-sub"><span class="type-chip">${TYPE_LABEL[b.type]}</span>${timeStr ? `<span class="time-chip">${timeStr}</span>` : ''}${carryoverBadge}${intervalBadge}</div>
             ${b.type === 'routine' ? renderHeatmap(b.carryoverId) : ''}
           </div>
@@ -857,12 +978,13 @@ function copyYesterday() {
 
   const today = ensureDay(viewingDateKey);
   const nonCarryover = yDay.blocks.filter(b => !b.carryover);
-  if (!nonCarryover.length) { showToast('복사할 블록이 없어요 (이행/루틴 블록은 자동으로 이어져요)'); return; }
+  if (!nonCarryover.length) { showToast('복사할 블록이 없어요 (이행/루틴/절제 블록은 자동으로 이어져요)'); return; }
 
   const copied = nonCarryover.map(b => {
     const nb = { ...b, id: Date.now() + Math.floor(Math.random()*10000) };
     if (nb.progressType === 'counter') nb.current = 0;
     if (nb.progressType === 'toggle') nb.done = false;
+    if (nb.progressType === 'timer') { nb.abstainSessions = []; nb.sessions = []; }
     return nb;
   });
   today.blocks = today.blocks.concat(copied);
@@ -890,8 +1012,11 @@ function dayTotalFocusMs(day) {
 // 하루치 점수를 절댓값 합산 방식으로 계산.
 // fracFn(b) : 블록 b의 그날 진행 비율(0~1)을 반환하는 함수 — 오늘 화면용은 blockProgressFraction,
 //             특정 과거 날짜의 "그날만의 기여도"용은 blockDayFraction을 넘겨받아 사용한다.
+// 절제(abstain) 유형은 일반 블록과 점수 부호가 반대다: 상한을 넘기 전까지는 점수에 영향이 없고,
+// 한 번 넘으면 그 즉시 weights.abstain 만큼 감점되며(maxScore에는 포함 안 됨), 그 이후 더 써도 추가 감점은 없다.
 function computeDayScoreRaw(day, dayKey, fracFn) {
-  const scorable = day.blocks.filter(b => b.progressType !== 'none');
+  const scorable = day.blocks.filter(b => b.progressType !== 'none' && b.type !== 'abstain');
+  const abstainBlocks = day.blocks.filter(b => b.type === 'abstain');
   const totalFocusMs = dayTotalFocusMs(day);
   const focusWeight = weights.focus ?? 0;
   const hasFocusComponent = focusWeight > 0;
@@ -899,7 +1024,7 @@ function computeDayScoreRaw(day, dayKey, fracFn) {
   const watchFrac = dayWatchScoreFraction(day);
   const hasWatchComponent = watchWeight > 0 && watchFrac !== null;
 
-  if (!scorable.length && !hasFocusComponent && !hasWatchComponent) {
+  if (!scorable.length && !hasFocusComponent && !hasWatchComponent && !abstainBlocks.length) {
     return { score: null, maxScore: 0, totalFocusMs, hasAny: false };
   }
 
@@ -922,7 +1047,11 @@ function computeDayScoreRaw(day, dayKey, fracFn) {
   // 초과달성 보너스: 절댓값 점수에 비례해 추가로 더해짐 (maxScore에는 포함 안 됨)
   let overBonus = 0;
   scorable.forEach(b => { overBonus += blockOverAchieveBonus(b); });
-  score = Math.round((score + overBonus) * 10) / 10;
+  // 절제 블록 감점: 상한을 넘은 블록마다 weights.abstain만큼 한 번씩 깎임
+  let abstainPenalty = 0;
+  const abstainWeight = weights.abstain ?? 5;
+  abstainBlocks.forEach(b => { if (isAbstainOverLimit(b)) abstainPenalty += abstainWeight; });
+  score = Math.round((score + overBonus - abstainPenalty) * 10) / 10;
   return { score, maxScore: Math.round(maxScore * 10) / 10, totalFocusMs, hasAny: true };
 }
 
@@ -941,11 +1070,12 @@ function renderScore() {
   const { score, maxScore, totalFocusMs } = result;
   const focusWeight = weights.focus ?? 0;
   const hasFocusComponent = focusWeight > 0;
-  // 진행 막대는 "오늘 다 채웠을 때의 기준 점수(maxScore)" 대비 현재 점수 비율로 표시
-  const barPct = maxScore > 0 ? Math.min(100, Math.round((score / maxScore) * 100)) : (score > 0 ? 100 : 0);
+  // 진행 막대는 "오늘 다 채웠을 때의 기준 점수(maxScore)" 대비 현재 점수 비율로 표시 (절제 감점으로 음수가 될 수도 있어 0 이상으로 고정)
+  const barPct = maxScore > 0 ? Math.max(0, Math.min(100, Math.round((score / maxScore) * 100))) : (score > 0 ? 100 : 0);
 
   let feedback;
-  if (barPct >= 90) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
+  if (score < 0) feedback = '절제 상한을 넘긴 항목이 있어 오늘 점수가 깎였어요. 내일 다시 챙겨봐요.';
+  else if (barPct >= 90) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
   else if (barPct >= 70) feedback = '꽤 잘 해내고 있어요. 남은 것도 마무리해봐요.';
   else if (barPct >= 40) feedback = '절반 정도 진행됐어요. 천천히 이어가요.';
   else if (barPct > 0) feedback = '이제 시작이에요. 하나씩 차근차근 해봐요.';
@@ -972,9 +1102,10 @@ function renderFeedbackButton() {
    FOCUS TIMER SHEET
    ========================================================= */
 function findBlockById(id) {
-  // 타이머는 보통 보고 있는 날짜의 블록을 다루지만, 다른 날짜에서 시작된 타이머가
-  // 진행 중일 수도 있으니 activeTimer.dateKey 기준으로도 찾는다.
-  for (const key of [viewingDateKey, activeTimer && activeTimer.dateKey].filter(Boolean)) {
+  // 타이머는 보통 보고 있는 날짜의 블록을 다루지만, 다른 날짜에서 시작된 타이머(보조 타이머나
+  // 절제 시간재기)가 진행 중일 수도 있으니 그 날짜들도 함께 탐색한다.
+  const abstainDateKey = activeAbstainTimers[id] && activeAbstainTimers[id].dateKey;
+  for (const key of [viewingDateKey, activeTimer && activeTimer.dateKey, abstainDateKey].filter(Boolean)) {
     const dayObj = days[key];
     if (!dayObj) continue;
     const found = dayObj.blocks.find(x => x.id === id);
@@ -1060,6 +1191,59 @@ function timerTick() {
       updateTimerDisplay();
     }
   }
+  // 실행 중인 절제 시간재기들의 카드 표시를 1초마다 가볍게 갱신 (전체 리렌더 없이 텍스트만)
+  let crossedLimitJustNow = false;
+  Object.keys(activeAbstainTimers).forEach(blockIdStr => {
+    const el = document.querySelector(`.card[data-id="${blockIdStr}"] .abstain-timer-display`);
+    if (el) {
+      const found = findBlockById(parseInt(blockIdStr));
+      if (found) {
+        const wasOver = el.dataset.over === '1';
+        const isOver = isAbstainOverLimit(found.block);
+        el.textContent = formatDurationShort(abstainTimerTotalMs(found.block));
+        if (isOver !== wasOver) { el.dataset.over = isOver ? '1' : '0'; crossedLimitJustNow = true; }
+      }
+    }
+  });
+  // 상한을 막 넘긴 시점이면 점수 표시와 카드의 초과 배지를 갱신 (가벼운 부분 갱신 대신 안전하게 전체 리렌더)
+  if (crossedLimitJustNow) { renderBlocks(); renderScore(); }
+}
+
+// 절제 블록의 "시간재기형" 진행 시간 합계. 보조 집중타이머(sessions)와는 별도로
+// abstainSessions에 기록되며, 현재 실행 중이면 그 경과시간도 더해서 보여준다.
+function abstainTimerTotalMs(b) {
+  const base = (b.abstainSessions || []).reduce((sum, s) => sum + Math.max(0, sessionDurationMs(s)), 0);
+  const live = activeAbstainTimers[b.id];
+  if (live) return base + (Date.now() - new Date(live.startedAt).getTime());
+  return base;
+}
+
+function startAbstainTimer(blockId) {
+  if (activeAbstainTimers[blockId]) return; // 이미 실행 중
+  activeAbstainTimers[blockId] = { dateKey: viewingDateKey, startedAt: new Date().toISOString() };
+  saveActiveAbstainTimers();
+  renderBlocks();
+  if (!timerTickHandle) timerTickHandle = setInterval(timerTick, 1000);
+}
+
+function stopAbstainTimer(blockId) {
+  const live = activeAbstainTimers[blockId];
+  if (!live) return;
+  const elapsedMs = Date.now() - new Date(live.startedAt).getTime();
+  delete activeAbstainTimers[blockId];
+  saveActiveAbstainTimers();
+  if (elapsedMs >= 1000) {
+    const day = ensureDay(live.dateKey);
+    const b = day.blocks.find(x => x.id === blockId);
+    if (b) {
+      if (!b.abstainSessions) b.abstainSessions = [];
+      const endTime = new Date();
+      const startTime = new Date(endTime.getTime() - elapsedMs);
+      b.abstainSessions.push({ start: startTime.toISOString(), end: endTime.toISOString() });
+      saveDays();
+    }
+  }
+  renderBlocks(); renderScore();
 }
 
 function timerStart() {
@@ -1861,9 +2045,10 @@ function submitWatchForm() {
     if (w) {
       w.name = name; w.author = author; w.type = selectedWatchType;
       w.progress = progress; w.archived = archived; w.planned = planned;
-      // 100% 달성 시 더 이상 이월되지 않도록 체인 중단 처리
-      if (progress >= 100 && w.watchChainId) {
-        watchChainMeta[w.watchChainId] = { stopped: true };
+      // 진행도/보관 상태가 바뀌면 이월 체인의 stopped 여부를 다시 맞춰준다.
+      // (100% 또는 보관 중이면 멈춤, 둘 다 해제되면 다시 이월 대상으로 재개)
+      if (w.watchChainId) {
+        watchChainMeta[w.watchChainId] = { stopped: progress >= 100 || archived };
         saveWatchChainMeta();
       }
     }
@@ -2198,6 +2383,13 @@ function checkMidnightRollover() {
 }
 setInterval(checkMidnightRollover, 60 * 1000);
 
+// 모바일 PWA는 백그라운드로 가면 setInterval이 멈추는 경우가 많다 (특히 iOS Safari).
+// 며칠간 앱을 안 열어도, 탭이 다시 보이거나 포커스를 받는 순간 날짜 전환 체크를 즉시 한 번 더 실행해서
+// 감상/할일 이월이 누락되지 않게 한다.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkMidnightRollover(); });
+window.addEventListener('focus', checkMidnightRollover);
+window.addEventListener('pageshow', checkMidnightRollover);
+
 /* =========================================================
    GAME TAB — 누적 포인트
    ========================================================= */
@@ -2301,7 +2493,7 @@ function recalcGamePoints() {
     newAddedScores[key] = score;
   });
 
-  gamePoints = total;
+  gamePoints = Math.max(0, total);
   gameAddedScores = newAddedScores;
   saveGamePoints();
   renderGamePoints();
@@ -2430,8 +2622,14 @@ function openYesterdayFeedback() {
     lines.push('블록 요약:');
     data.blocks.forEach(b => {
       let line = `- ${b.name} (${TYPE_LABEL[b.type]})`;
-      if (b.progressType === 'counter') line += `: ${b.current}/${b.total}`;
-      else if (b.progressType === 'toggle') line += `: ${b.done ? '완료' : '미완료'}`;
+      if (b.progressType === 'counter') {
+        line += `: ${b.current}/${b.total}`;
+        if (b.type === 'abstain' && isAbstainOverLimit(b)) line += ' · 상한 초과';
+      } else if (b.progressType === 'toggle') line += `: ${b.done ? '완료' : '미완료'}`;
+      else if (b.progressType === 'timer') {
+        line += `: ${formatDurationShort(abstainTimerTotalMs(b))} / ${b.limitMinutes}분`;
+        if (isAbstainOverLimit(b)) line += ' · 상한 초과';
+      }
       lines.push(line);
     });
   }
@@ -2473,6 +2671,7 @@ function openMenu() {
   document.getElementById('wFocus').value = weights.focus ?? 6;
   document.getElementById('wWatch').value = weights.watch ?? 3;
   document.getElementById('wUnspecified').value = weights.unspecified ?? 5;
+  document.getElementById('wAbstain').value = weights.abstain ?? 5;
   document.getElementById('menuOverlay').classList.add('open');
 }
 
@@ -2486,6 +2685,7 @@ function saveMenuSettings() {
     focus: parseFloat(document.getElementById('wFocus').value) || 0,
     watch: parseFloat(document.getElementById('wWatch').value) || 0,
     unspecified: parseFloat(document.getElementById('wUnspecified').value) || 0,
+    abstain: parseFloat(document.getElementById('wAbstain').value) || 0,
     focusGoalMinutes: weights.focusGoalMinutes ?? FOCUS_GOAL_MINUTES_DEFAULT,
   };
   saveWeightsToStorage();
