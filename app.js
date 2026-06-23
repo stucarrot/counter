@@ -88,6 +88,8 @@ let editPeriodId = null;
 let selectedPeriodMode = null;
 let pendingPeriodRefs = []; // 기간계획 폼 작성 중 임시로 들고 있는 참조 목록
 let importPlanId = null;
+// 드래그 재정렬 진행 중 상태 (한 번에 하나의 드래그만 가능)
+let dragReorderState = null;
 
 function appNow() {
   // 오전 4시를 하루의 시작으로 보는 "가상 현재 시각"
@@ -167,7 +169,9 @@ function switchTab(tab) {
     document.getElementById(`tabBtn-${t}`).classList.toggle('active', tab === t);
     document.getElementById(`page-${t}`).classList.toggle('hidden', tab !== t);
   });
-  document.getElementById('reorderToggle').style.display = (tab === 'todo' || tab === 'watch' || tab === 'plan') ? '' : 'none';
+  const showReorder = (tab === 'todo' || tab === 'watch' || tab === 'plan');
+  const reorderBtn = document.getElementById('reorderToggle');
+  reorderBtn.classList.toggle('reorder-toggle-hidden', !showReorder);
   if (reordering && tab !== 'todo' && tab !== 'watch' && tab !== 'plan') toggleReorder();
   if (tab === 'memo') {
     renderMemoHeader();
@@ -632,6 +636,109 @@ function moveBlock(idx, dir) {
   saveDays(); renderBlocks();
 }
 
+/* =========================================================
+   DRAG REORDER (꾹 누르기 → 드래그)
+   카드 좌측의 reorder-handle(세 줄 아이콘)을 누른 채로 위아래로 끌면 카드 순서가 바뀐다.
+   기존 위/아래 화살표 버튼과 공존 — 둘 중 편한 방법으로 순서를 바꿀 수 있다.
+   컨테이너별로 하나의 pointerdown 리스너만 두고(이벤트 위임), 어떤 카드를 눌렀는지는
+   매번 e.target에서 가장 가까운 .card를 찾아 판단한다 (렌더링이 다시 될 때마다
+   리스너를 재등록할 필요가 없어서 가볍다).
+
+   registerDragReorder(containerId, getList, onReorder)
+     - containerId : 카드들을 담고 있는 리스트 div의 id
+     - getList()   : (현재는 직접 쓰이지 않지만) 컨테이너의 현재 데이터 배열 — 디버깅/향후 확장용으로 보관
+     - onReorder(fromIdx, toIdx) : 실제 데이터 배열의 순서를 바꾸고 저장 + 리렌더까지 책임짐
+   ========================================================= */
+const dragReorderConfigs = {}; // { [containerId]: { getList, onReorder } }
+
+function registerDragReorder(containerId, getList, onReorder) {
+  dragReorderConfigs[containerId] = { getList, onReorder };
+  const el = document.getElementById(containerId);
+  if (!el || el.dataset.dragInit) return; // 리스너는 한 번만 부착
+  el.dataset.dragInit = '1';
+  el.addEventListener('pointerdown', e => onDragHandlePointerDown(e, containerId));
+}
+
+function onDragHandlePointerDown(e, containerId) {
+  const handle = e.target.closest('.reorder-handle');
+  if (!handle) return; // 핸들이 아닌 다른 부분을 눌렀으면 무시 (일반 클릭/스크롤 동작 유지)
+  if (handle.classList.contains('reorder-handle-disabled')) return; // 시간순 정렬 중에는 순서 변경 불가
+  const card = handle.closest('.card');
+  const container = document.getElementById(containerId);
+  if (!card || !container) return;
+
+  const cards = Array.from(container.querySelectorAll('.card'));
+  const startIdx = cards.indexOf(card);
+  if (startIdx === -1) return;
+
+  e.preventDefault();
+  const cardRect = card.getBoundingClientRect();
+  const cardHeight = cardRect.height;
+  const gap = cards.length > 1
+    ? (cards[1].getBoundingClientRect().top - cardRect.top) - cardRect.height
+    : 0;
+  const rowHeight = cardHeight + Math.max(0, gap);
+
+  dragReorderState = {
+    containerId, cards, startIdx, currentIdx: startIdx,
+    startY: e.clientY, cardHeight: rowHeight, card,
+    pointerId: e.pointerId,
+  };
+
+  card.classList.add('drag-active');
+  card.style.position = 'relative';
+  card.style.zIndex = '5';
+  card.setPointerCapture(e.pointerId);
+
+  card.addEventListener('pointermove', onDragHandlePointerMove);
+  card.addEventListener('pointerup', onDragHandlePointerUp);
+  card.addEventListener('pointercancel', onDragHandlePointerUp);
+}
+
+function onDragHandlePointerMove(e) {
+  const st = dragReorderState;
+  if (!st || e.pointerId !== st.pointerId) return;
+  const dy = e.clientY - st.startY;
+  st.card.style.transform = `translateY(${dy}px)`;
+
+  // 드래그 중인 카드가 몇 칸 이동했는지 계산해서, 사이에 있는 카드들을 밀어내는 자리 비움 애니메이션을 준다
+  const steps = Math.round(dy / st.cardHeight);
+  let newIdx = Math.max(0, Math.min(st.cards.length - 1, st.startIdx + steps));
+  if (newIdx !== st.currentIdx) {
+    st.currentIdx = newIdx;
+    st.cards.forEach((c, i) => {
+      if (c === st.card) return;
+      let shift = 0;
+      if (st.startIdx < newIdx && i > st.startIdx && i <= newIdx) shift = -st.cardHeight;
+      else if (st.startIdx > newIdx && i < st.startIdx && i >= newIdx) shift = st.cardHeight;
+      c.style.transition = 'transform .15s ease';
+      c.style.transform = shift ? `translateY(${shift}px)` : '';
+    });
+  }
+}
+
+function onDragHandlePointerUp(e) {
+  const st = dragReorderState;
+  if (!st || e.pointerId !== st.pointerId) return;
+  st.card.removeEventListener('pointermove', onDragHandlePointerMove);
+  st.card.removeEventListener('pointerup', onDragHandlePointerUp);
+  st.card.removeEventListener('pointercancel', onDragHandlePointerUp);
+  try { st.card.releasePointerCapture(st.pointerId); } catch (err) {}
+
+  st.card.classList.remove('drag-active');
+  st.card.style.position = '';
+  st.card.style.zIndex = '';
+  st.card.style.transform = '';
+  st.cards.forEach(c => { c.style.transition = ''; c.style.transform = ''; });
+
+  const { containerId, startIdx, currentIdx } = st;
+  dragReorderState = null;
+  if (currentIdx !== startIdx) {
+    const cfg = dragReorderConfigs[containerId];
+    if (cfg) cfg.onReorder(startIdx, currentIdx);
+  }
+}
+
 function timeLabelFor(b) {
   if (b.time === 'custom' && b.customTime) return b.customTime;
   return TIME_LABEL[b.time] || '';
@@ -966,6 +1073,20 @@ function renderBlocks() {
       </div>
     </div>`;
   }).join('');
+
+  // 드래그는 "화면에 보이는 순서(완료 항목이 맨 아래로 정렬된 순서)" 기준으로 동작.
+  // 화살표 버튼과 마찬가지로, 옮긴 결과를 실제 day.blocks 배열에 그 순서대로 다시 써넣는다
+  // (완료 상태가 바뀌지 않았다면 다음 렌더링에서 같은 정렬 결과가 나와 자리가 유지된다).
+  registerDragReorder('blockList',
+    () => sorted.map(x => x.b),
+    (fromIdx, toIdx) => {
+      const order = sorted.map(x => x.b);
+      const [moved] = order.splice(fromIdx, 1);
+      order.splice(toIdx, 0, moved);
+      day.blocks = order;
+      saveDays(); renderBlocks();
+    }
+  );
 }
 
 /* =========================================================
@@ -1659,7 +1780,7 @@ function renderPlanList() {
     }
     const timeStr = planTimeRangeLabel(p);
     return `<div class="card block-card type-${p.type} ${complete && p.progressType!=='none' ? 'completed':''}" data-id="${p.id}">
-      <div class="reorder-handle">
+      <div class="reorder-handle ${currentPlanSubtab === 'time' ? 'reorder-handle-disabled' : ''}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
       <div class="card-main">
@@ -1689,6 +1810,24 @@ function renderPlanList() {
       </div>
     </div>`;
   }).join('');
+
+  // 시간순(time) 서브탭은 시작 시각으로 자동 정렬되므로 드래그로 순서를 바꿀 수 없다.
+  // 시간미지정(unspecified) 서브탭만 order 필드를 화면에 보이는 순서대로 다시 매겨서 저장한다.
+  if (currentPlanSubtab !== 'time') {
+    registerDragReorder('planList',
+      () => list,
+      (fromIdx, toIdx) => {
+        const order = list.slice();
+        const [moved] = order.splice(fromIdx, 1);
+        order.splice(toIdx, 0, moved);
+        order.forEach((p, i) => { p.order = i; });
+        savePlanBlocks();
+        renderPlanList();
+      }
+    );
+  } else {
+    delete dragReorderConfigs['planList']; // time 서브탭에서는 드래그 비활성 (reorder-handle도 disabled 표시됨)
+  }
 }
 
 /* ---------- 가져오기 (계획 → 할일) ---------- */
@@ -2267,6 +2406,17 @@ function renderWatchBlocks() {
       </div>
     </div>`;
   }).join('');
+
+  registerDragReorder('watchList',
+    () => sorted.map(x => x.w),
+    (fromIdx, toIdx) => {
+      const order = sorted.map(x => x.w);
+      const [moved] = order.splice(fromIdx, 1);
+      order.splice(toIdx, 0, moved);
+      day.watchBlocks = order;
+      saveDays(); renderWatchBlocks();
+    }
+  );
 }
 
 /* ---------- 감상 메모 (시간재기 시트와 동일한 틀, 메모탭 인터페이스 재사용) ---------- */

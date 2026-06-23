@@ -165,6 +165,7 @@ html, body {
   background: none; border: 1px solid var(--gray-300); border-radius: 7px;
   padding: 7px 10px; font-size: 12px; color: var(--black); cursor: pointer;
 }
+.ghost-btn.reorder-toggle-hidden { visibility: hidden; pointer-events: none; }
 .ghost-btn svg { width: 14px; height: 14px; }
 .ghost-btn[aria-pressed="true"] { background: var(--black); color: var(--white); border-color: var(--black); }
 .ghost-btn.icon-only { padding: 7px; }
@@ -429,7 +430,9 @@ html, body {
 .feedback-body .fb-loading { color: var(--gray-400); }
 
 /* drag/reorder */
-.reorder-handle { display: none; width: 30px; height: 30px; border: none; background: none; cursor: grab; align-items: center; justify-content: center; color: var(--gray-600); flex-shrink: 0; }
+.reorder-handle { display: none; width: 30px; height: 30px; border: none; background: none; cursor: grab; align-items: center; justify-content: center; color: var(--gray-600); flex-shrink: 0; touch-action: none; }
+.reorder-handle.reorder-handle-disabled { opacity: .25; cursor: not-allowed; }
+.reorder-handle.drag-active, .card.drag-active .reorder-handle { cursor: grabbing; }
 .reorder-handle svg { width: 18px; height: 18px; }
 body.reordering .reorder-handle { display: flex; }
 body.reordering .card-btns .icon-btn { display: none; }
@@ -437,6 +440,7 @@ body.reordering .card { display: flex; align-items: center; gap: 4px; }
 body.reordering .card-main { flex: 1; min-width: 0; }
 .card-main { width: 100%; }
 .card.drag-ghost { opacity: 0.35; }
+.card.drag-active { box-shadow: 0 6px 18px rgba(0,0,0,0.3); cursor: grabbing; }
 .move-btns { display: none; flex-direction: column; gap: 2px; }
 body.reordering .move-btns { display: flex; }
 .move-btn { width: 26px; height: 22px; border: 1px solid var(--black); border-radius: 5px; background: var(--white); cursor: pointer; display: flex; align-items: center; justify-content: center; }
