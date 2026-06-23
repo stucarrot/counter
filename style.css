@@ -47,6 +47,92 @@ button {
   --hm-4: #5a32c4;
 }
 
+/* =========================================================
+   DARK MODE
+   --black/--white/--gray-* 는 이름과 달리 "텍스트/배경/보더의 시맨틱 톤"으로 쓰이고 있어서,
+   다크모드에서는 값만 반전시켜 전체 화면이 자동으로 대응되게 한다.
+   적용 순서: 시스템 설정(prefers-color-scheme)이 기본값이고, html에 theme-dark/theme-light
+   클래스가 붙으면 그 값이 시스템 설정보다 우선한다 (메뉴에서 수동으로 재정의).
+   ========================================================= */
+@media (prefers-color-scheme: dark) {
+  html:not(.theme-light):not(.theme-dark) {
+    --black: #f2f2f2;
+    --white: #1c1c1e;
+    --gray-100: #2c2c2e;
+    --gray-200: #38383a;
+    --gray-300: #48484a;
+    --gray-400: #8d8d93;
+    --gray-600: #b0b0b6;
+
+    --type-schedule-bg: #1f3252;
+    --type-schedule-border: #3f6098;
+    --type-once-bg: #3a2640;
+    --type-once-border: #714b78;
+    --type-todo-bg: #1f3a26;
+    --type-todo-border: #3c6b48;
+    --type-leisure-bg: #46380f;
+    --type-leisure-border: #8a6a1e;
+    --type-routine-bg: #322a4d;
+    --type-routine-border: #6650a3;
+    --type-watch-book-bg: #3d2424;
+    --type-watch-book-border: #8a4f4f;
+    --type-watch-movie-bg: #1f3640;
+    --type-watch-movie-border: #4a8294;
+    --type-watch-etc-bg: #303030;
+    --type-watch-etc-border: #5a5a5a;
+    --type-unspecified-bg: #2a2a2a;
+    --type-unspecified-border: #4a4a4a;
+    --type-abstain-bg: #f2f2f2;
+    --type-abstain-border: #fff;
+
+    --hm-empty: #2c2c2e;
+    --hm-0: #332b52;
+    --hm-1: #4a3a78;
+    --hm-2: #6650a3;
+    --hm-3: #8a6fd0;
+    --hm-4: #b09aff;
+  }
+}
+html.theme-dark {
+  --black: #f2f2f2;
+  --white: #1c1c1e;
+  --gray-100: #2c2c2e;
+  --gray-200: #38383a;
+  --gray-300: #48484a;
+  --gray-400: #8d8d93;
+  --gray-600: #b0b0b6;
+
+  --type-schedule-bg: #1f3252;
+  --type-schedule-border: #3f6098;
+  --type-once-bg: #3a2640;
+  --type-once-border: #714b78;
+  --type-todo-bg: #1f3a26;
+  --type-todo-border: #3c6b48;
+  --type-leisure-bg: #46380f;
+  --type-leisure-border: #8a6a1e;
+  --type-routine-bg: #322a4d;
+  --type-routine-border: #6650a3;
+  --type-watch-book-bg: #3d2424;
+  --type-watch-book-border: #8a4f4f;
+  --type-watch-movie-bg: #1f3640;
+  --type-watch-movie-border: #4a8294;
+  --type-watch-etc-bg: #303030;
+  --type-watch-etc-border: #5a5a5a;
+  --type-unspecified-bg: #2a2a2a;
+  --type-unspecified-border: #4a4a4a;
+  --type-abstain-bg: #f2f2f2;
+  --type-abstain-border: #fff;
+
+  --hm-empty: #2c2c2e;
+  --hm-0: #332b52;
+  --hm-1: #4a3a78;
+  --hm-2: #6650a3;
+  --hm-3: #8a6fd0;
+  --hm-4: #b09aff;
+}
+html.theme-light { color-scheme: light; }
+html.theme-dark { color-scheme: dark; }
+
 html, body {
   height: 100%;
   font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif;
@@ -55,23 +141,24 @@ html, body {
   overflow: hidden;
 }
 
-#app { display: flex; flex-direction: column; height: 100%; max-width: 480px; margin: 0 auto; }
+#app { display: flex; flex-direction: column; height: 100%; max-width: 480px; margin: 0 auto; padding-top: var(--safe-top); }
 
-/* ===== Topbar ===== */
-.topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: calc(10px + var(--safe-top)) 12px 0;
-  border-bottom: 1px solid var(--gray-200);
-  background: var(--white); flex-shrink: 0; gap: 8px;
+/* ===== Bottombar (탭 + 순서변경/더보기 통합) ===== */
+.bottombar {
+  display: flex; align-items: stretch; justify-content: space-between;
+  padding: 6px 8px calc(6px + var(--safe-bottom));
+  border-top: 1px solid var(--gray-200);
+  background: var(--white); flex-shrink: 0; gap: 4px;
+  order: 99; /* #app 안에서 항상 맨 마지막(화면 맨 아래)에 위치 */
 }
-.tabs { display: flex; gap: 2px; flex: 1; min-width: 0; }
+.bottom-tabs { display: flex; gap: 1px; flex: 1; min-width: 0; }
 .tab-btn {
-  background: none; border: none; font-size: 13px; font-weight: 500;
-  color: var(--gray-400); padding: 9px 7px 11px; cursor: pointer;
-  border-bottom: 2px solid transparent; white-space: nowrap;
+  flex: 1; min-width: 0; background: none; border: none; font-size: 11.5px; font-weight: 500;
+  color: var(--gray-400); padding: 7px 2px 5px; cursor: pointer;
+  border-radius: 8px; white-space: nowrap;
 }
-.tab-btn.active { color: var(--black); border-bottom-color: var(--black); font-weight: 600; }
-.topbar-actions { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; flex-shrink: 0; }
+.tab-btn.active { color: var(--black); background: var(--gray-100); font-weight: 700; }
+.bottombar-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 
 .ghost-btn {
   display: flex; align-items: center; gap: 5px;
@@ -453,7 +540,7 @@ body.reordering .move-btns { display: flex; }
 .weight-row span { font-size: 13.5px; font-weight: 500; }
 .weight-row input { width: 70px; border: 1px solid var(--black); border-radius: 7px; padding: 7px 9px; font-size: 14px; text-align: center; }
 
-#install-banner { display: none; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--black); color: var(--white); font-size: 12.5px; flex-shrink: 0; padding-bottom: calc(10px + var(--safe-bottom)); gap: 10px; }
+#install-banner { display: none; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--black); color: var(--white); font-size: 12.5px; flex-shrink: 0; gap: 10px; }
 #install-banner.show { display: flex; }
 #install-banner button { background: var(--white); color: var(--black); border: none; border-radius: 6px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
 

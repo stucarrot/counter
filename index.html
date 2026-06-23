@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#ffffff">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -12,28 +12,20 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>블록카운터</title>
 <link rel="stylesheet" href="style.css">
+<script>
+  // CSS/app.js가 로드되기 전에 저장된 테마 선택을 즉시 <html>에 반영해 깜빡임을 방지
+  (function() {
+    try {
+      var pref = localStorage.getItem('pc_theme_pref') || 'system';
+      if (pref === 'light') document.documentElement.classList.add('theme-light');
+      else if (pref === 'dark') document.documentElement.classList.add('theme-dark');
+    } catch (e) {}
+  })();
+</script>
 </head>
 <body>
 
 <div id="app">
-
-  <div class="topbar">
-    <div class="tabs">
-      <button class="tab-btn" id="tabBtn-plan" onclick="switchTab('plan')">계획</button>
-      <button class="tab-btn active" id="tabBtn-todo" onclick="switchTab('todo')">할일</button>
-      <button class="tab-btn" id="tabBtn-watch" onclick="switchTab('watch')">감상</button>
-      <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모</button>
-      <button class="tab-btn" id="tabBtn-game" onclick="switchTab('game')">게임</button>
-    </div>
-    <div class="topbar-actions">
-      <button class="ghost-btn icon-only" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false" aria-label="순서 변경">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-      </button>
-      <button class="ghost-btn icon-only" onclick="openMenu()" aria-label="더보기">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
-      </button>
-    </div>
-  </div>
 
   <!-- ============ PLAN PAGE ============ -->
   <div class="page hidden" id="page-plan">
@@ -160,6 +152,24 @@
     <span>홈 화면에 추가하면 앱처럼 사용할 수 있어요</span>
     <button onclick="installApp()">설치</button>
   </div>
+
+  <div class="bottombar">
+    <div class="bottom-tabs">
+      <button class="tab-btn" id="tabBtn-plan" onclick="switchTab('plan')">계획</button>
+      <button class="tab-btn active" id="tabBtn-todo" onclick="switchTab('todo')">할일</button>
+      <button class="tab-btn" id="tabBtn-watch" onclick="switchTab('watch')">감상</button>
+      <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모</button>
+      <button class="tab-btn" id="tabBtn-game" onclick="switchTab('game')">게임</button>
+    </div>
+    <div class="bottombar-actions">
+      <button class="ghost-btn icon-only" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false" aria-label="순서 변경">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <button class="ghost-btn icon-only" onclick="openMenu()" aria-label="더보기">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+      </button>
+    </div>
+  </div>
 </div>
 
 <!-- ============ BLOCK FORM SHEET ============ -->
@@ -236,7 +246,7 @@
         <input type="number" id="bfTimerLimitMinutes" placeholder="예: 60" min="1" max="9999" inputmode="numeric" style="width:100px;">
         <span class="split-label-text">분</span>
       </div>
-      <p style="font-size:12px;color:#888;margin:6px 0 0;">이 시간을 넘기면 점수에서 절제 감점값이 한 번에 빠져요.</p>
+      <p style="font-size:12px;color:var(--gray-400);margin:6px 0 0;">이 시간을 넘기면 점수에서 절제 감점값이 한 번에 빠져요.</p>
     </div>
 
     <div class="field" id="bfCarryoverField">
@@ -578,6 +588,12 @@
   <div class="sheet">
     <div class="sheet-handle"></div>
     <h2>더보기</h2>
+    <h2 style="margin-top:0;">화면 테마</h2>
+    <div class="seg-group" id="themeSegGroup" style="margin-bottom:18px;">
+      <button class="seg-btn" data-val="system" onclick="selectTheme('system')">시스템 연동</button>
+      <button class="seg-btn" data-val="light" onclick="selectTheme('light')">라이트</button>
+      <button class="seg-btn" data-val="dark" onclick="selectTheme('dark')">다크</button>
+    </div>
     <button class="menu-item" onclick="exportBackup()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       전체 기록 백업 (내보내기)
@@ -588,7 +604,7 @@
     </button>
     <input type="file" id="importFile" accept="application/json" class="hidden" onchange="importBackup(event)">
     <h2 style="margin-top:20px;">점수 설정 (절댓값)</h2>
-    <p style="font-size:12.5px;color:#888;margin:-4px 0 10px;">유형별로 완료 시 받는 점수예요. 카운터형은 진행 비율만큼 부분 점수가 쌓여요.</p>
+    <p style="font-size:12.5px;color:var(--gray-400);margin:-4px 0 10px;">유형별로 완료 시 받는 점수예요. 카운터형은 진행 비율만큼 부분 점수가 쌓여요.</p>
     <div class="weight-row"><span>일정</span><input type="number" id="wSchedule" min="0" max="999" step="0.5"></div>
     <div class="weight-row"><span>할일</span><input type="number" id="wTodo" min="0" max="999" step="0.5"></div>
     <div class="weight-row"><span>일회성</span><input type="number" id="wOnce" min="0" max="999" step="0.5"></div>

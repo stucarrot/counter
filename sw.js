@@ -1,4 +1,4 @@
-const CACHE = 'counter-v11';
+const CACHE = 'counter-v12';
 const ASSETS = ['./index.html', './manifest.json', './style.css', './app.js'];
 
 self.addEventListener('install', e => {

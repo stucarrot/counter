@@ -65,6 +65,7 @@ let gameAddedScores = JSON.parse(localStorage.getItem('pc_game_added_scores') ||
 let gameSpendLog = JSON.parse(localStorage.getItem('pc_game_spend_log') || '[]');
 let planBlocks = JSON.parse(localStorage.getItem('pc_plan_blocks') || '[]');
 let periodPlans = JSON.parse(localStorage.getItem('pc_period_plans') || '[]');
+let themePref = localStorage.getItem('pc_theme_pref') || 'system'; // 'system' | 'light' | 'dark'
 
 let editBlockId = null;
 let deleteBlockId = null;
@@ -733,8 +734,9 @@ function syncCarryoversForToday() {
     }
     if (!template) return;
 
-    // 완료된 상태로 끝났다면 체인을 멈추고 복사하지 않는다 (조용히 사라짐)
-    if (isBlockComplete(template)) {
+    // 완료된 상태로 끝났다면 체인을 멈추고 복사하지 않는다 (조용히 사라짐).
+    // 단, 루틴/절제는 "완료"가 그날의 결과일 뿐 다음날도 무조건 미완료 상태로 다시 반복돼야 하므로 예외.
+    if (template.type !== 'routine' && template.type !== 'abstain' && isBlockComplete(template)) {
       carryoverMeta[cid] = { stopped: true };
       saveCarryoverMeta();
       return;
@@ -1384,6 +1386,47 @@ function switchPlanSubtab(sub) {
 
 function onPlanTimeModeChanged() {
   document.getElementById('pfTimeFields').classList.toggle('hidden', selectedPlanTimeMode !== 'specified');
+}
+
+/* =========================================================
+   PLAN SUBTAB SWIPE GESTURE
+   계획 탭 안의 작은 탭(시간순/시간미지정/기간계획)을 좌우 스와이프로 전환.
+   가로 이동이 세로 이동보다 뚜렷하게 크고(가로/세로 비율 1.5 이상),
+   일정 거리(SWIPE_THRESHOLD) 이상 움직였을 때만 탭 전환으로 인식해서
+   세로 스크롤이나 다른 가로 스크롤 요소(날짜 입력 등)와 충돌하지 않게 한다.
+   ========================================================= */
+const PLAN_SUBTAB_ORDER = ['time', 'unspecified', 'period'];
+const SWIPE_THRESHOLD = 55; // px
+let planSwipeStartX = null, planSwipeStartY = null;
+
+function initPlanSubtabSwipe() {
+  const el = document.getElementById('planList');
+  if (!el) return;
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return;
+    planSwipeStartX = e.touches[0].clientX;
+    planSwipeStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  el.addEventListener('touchend', e => {
+    if (planSwipeStartX === null) return;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - planSwipeStartX;
+    const dy = touch.clientY - planSwipeStartY;
+    planSwipeStartX = null; planSwipeStartY = null;
+    if (Math.abs(dx) < SWIPE_THRESHOLD) return; // 너무 짧은 움직임은 무시
+    if (Math.abs(dx) < Math.abs(dy) * 1.5) return; // 세로 스크롤 의도일 가능성이 높으면 무시
+
+    const idx = PLAN_SUBTAB_ORDER.indexOf(currentPlanSubtab);
+    if (idx === -1) return;
+    if (dx < 0 && idx < PLAN_SUBTAB_ORDER.length - 1) {
+      // 왼쪽으로 스와이프 → 다음 탭
+      switchPlanSubtab(PLAN_SUBTAB_ORDER[idx + 1]);
+    } else if (dx > 0 && idx > 0) {
+      // 오른쪽으로 스와이프 → 이전 탭
+      switchPlanSubtab(PLAN_SUBTAB_ORDER[idx - 1]);
+    }
+  }, { passive: true });
 }
 
 function togglePlanCounterFields() {
@@ -2656,13 +2699,45 @@ function openYesterdayFeedback() {
   else summary = '어제는 거의 진행되지 못한 하루였어요. 너무 자책하지 말고, 오늘 할 일을 좀 더 작은 단위로 쪼개보는 게 도움이 될 수 있어요.';
   summary += watchSummaryLine;
 
-  body.innerHTML = `<div style="margin-bottom:14px;">${esc(summary)}</div><div style="font-size:12.5px;color:#888;white-space:pre-wrap;">${esc(lines.join('\n'))}</div>`;
+  body.innerHTML = `<div style="margin-bottom:14px;">${esc(summary)}</div><div style="font-size:12.5px;color:var(--gray-400);white-space:pre-wrap;">${esc(lines.join('\n'))}</div>`;
+}
+
+/* =========================================================
+   THEME (다크모드) — 'system'은 prefers-color-scheme을 따르고,
+   'light'/'dark'는 메뉴에서 수동으로 선택한 값을 강제 적용한다.
+   ========================================================= */
+function applyTheme() {
+  document.documentElement.classList.remove('theme-light', 'theme-dark');
+  if (themePref === 'light') document.documentElement.classList.add('theme-light');
+  else if (themePref === 'dark') document.documentElement.classList.add('theme-dark');
+  // 'system'이면 클래스를 안 붙여서 CSS의 prefers-color-scheme 미디어쿼리가 그대로 적용됨
+
+  // PWA 상단 상태바 색도 실제 배경(--white 변수)에 맞춰 갱신
+  const isDark = themePref === 'dark' || (themePref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeColorMeta) themeColorMeta.setAttribute('content', isDark ? '#1c1c1e' : '#ffffff');
+
+  document.querySelectorAll('#themeSegGroup .seg-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === themePref));
+}
+
+function selectTheme(pref) {
+  themePref = pref;
+  localStorage.setItem('pc_theme_pref', pref);
+  applyTheme();
+}
+
+// 시스템 다크모드 설정이 바뀌는 경우(예: 야간에 자동 전환되는 OS 설정) 'system' 모드일 때 상태바 색을 같이 갱신
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (themePref === 'system') applyTheme();
+  });
 }
 
 /* =========================================================
    BACKUP / IMPORT / WEIGHTS
    ========================================================= */
 function openMenu() {
+  applyTheme();
   document.getElementById('wSchedule').value = weights.schedule;
   document.getElementById('wTodo').value = weights.todo;
   document.getElementById('wOnce').value = weights.once;
@@ -2772,6 +2847,7 @@ if ('serviceWorker' in navigator) {
 /* =========================================================
    INIT
    ========================================================= */
+applyTheme(); // 화면이 그려지기 전에 가장 먼저 테마를 적용해 깜빡임을 방지
 // 앱을 며칠 만에 다시 열었을 수도 있으니, 어제까지의 미합산 점수를 먼저 챙긴다.
 reconcileGamePoints();
 syncCarryoversForToday();
@@ -2780,6 +2856,7 @@ renderDayHeader();
 renderBlocks();
 renderScore();
 renderGamePoints();
+initPlanSubtabSwipe();
 
 // 진행 중인 타이머가 있으면 (예: 앱을 닫았다 다시 열었을 때) 화면 갱신을 위해
 // 항상 tick 인터벌을 켜둔다. 타이머 시트가 열려있지 않으면 timerTick 내부에서
