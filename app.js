@@ -76,6 +76,7 @@ let watchLists = JSON.parse(localStorage.getItem('pc_watch_lists') || '[]');
 
 let editBlockId = null;
 let deleteBlockId = null;
+let postponeBlockId = null;
 let deferredPrompt = null;
 let reordering = false;
 let currentTab = 'todo';
@@ -693,6 +694,54 @@ function moveBlock(idx, dir) {
 }
 
 /* =========================================================
+   POSTPONE (미루기)
+   미완료 + 비이행(carryover 아님) 블록을 다른 날짜로 옮긴다. "복사"가 아니라 "이동" —
+   오늘 화면에서는 사라지고 지정한 날짜에 같은 진행률 그대로 새로 생긴다.
+   보조 집중타이머 세션(sessions)은 그 날의 기록이라 의미가 없어지므로 초기화한다.
+   ========================================================= */
+function openPostponePopup(blockId) {
+  postponeBlockId = blockId;
+  document.getElementById('postponeDateField').classList.add('hidden');
+  const tomorrow = addDaysToKey(viewingDateKey, 1);
+  const dateInput = document.getElementById('postponeDateInput');
+  dateInput.value = tomorrow;
+  dateInput.min = TODAY_KEY(); // 과거 날짜는 선택 불가 (미루기는 항상 미래로만)
+  document.getElementById('postponeOverlay').classList.add('open');
+}
+
+function togglePostponeDateField() {
+  document.getElementById('postponeDateField').classList.toggle('hidden');
+}
+
+function postponeBlock(mode) {
+  const day = ensureDay(viewingDateKey);
+  const idx = day.blocks.findIndex(x => x.id === postponeBlockId);
+  if (idx === -1) { closeOverlay('postponeOverlay'); return; }
+
+  let targetKey;
+  if (mode === 'tomorrow') {
+    targetKey = addDaysToKey(viewingDateKey, 1);
+  } else {
+    const val = document.getElementById('postponeDateInput').value;
+    if (!val) { showToast('날짜를 선택해주세요'); return; }
+    if (val < TODAY_KEY()) { showToast('과거 날짜로는 미룰 수 없어요'); return; }
+    targetKey = val;
+  }
+
+  const [b] = day.blocks.splice(idx, 1); // 오늘 목록에서 제거 (이동이므로 복사가 아니라 삭제)
+  const moved = { ...b, id: Date.now() + Math.floor(Math.random()*10000) };
+  moved.sessions = []; // 그날의 집중시간 기록이라 날짜를 옮기면 의미가 없어짐
+  if (activeTimer && activeTimer.blockId === b.id) { activeTimer = null; saveActiveTimer(); }
+
+  const targetDay = ensureDay(targetKey);
+  targetDay.blocks.push(moved);
+
+  saveDays(); renderBlocks(); renderScore(); closeOverlay('postponeOverlay');
+  const targetD = keyToDate(targetKey);
+  showToast(`${targetD.getMonth()+1}월 ${targetD.getDate()}일로 미뤘어요`);
+}
+
+/* =========================================================
    DRAG REORDER (꾹 누르기 → 드래그)
    카드 좌측의 reorder-handle(세 줄 아이콘)을 누른 채로 위아래로 끌면 카드 순서가 바뀐다.
    기존 위/아래 화살표 버튼과 공존 — 둘 중 편한 방법으로 순서를 바꿀 수 있다.
@@ -956,13 +1005,23 @@ function formatClock(isoStr) {
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 function renderSessionLog(b) {
-  if (!b.sessions || !b.sessions.length) return '';
-  const rows = b.sessions.map(s => {
+  const hasSessions = b.sessions && b.sessions.length > 0;
+  const hasGoal = !!b.goalMinutes;
+  if (!hasSessions && !hasGoal) return '';
+
+  const rows = hasSessions ? b.sessions.map(s => {
     const dur = formatDurationShort(sessionDurationMs(s));
     return `<div class="session-log-row"><span class="session-log-duration">${dur}</span><span class="session-log-times">${formatClock(s.start)}–${formatClock(s.end)}</span></div>`;
-  }).join('');
+  }).join('') : '';
+
   const total = blockTotalFocusMs(b);
-  return `<div class="session-log">${rows}</div><div class="focus-total-row">총 집중시간 <strong>${formatDurationShort(total)}</strong></div>`;
+  const goalMs = hasGoal ? b.goalMinutes * 60 * 1000 : 0;
+  const goalReached = hasGoal && total >= goalMs;
+  const summaryHtml = hasGoal
+    ? `<div class="focus-total-row ${goalReached ? 'goal-reached' : ''}">걸린 시간 <strong>${formatDurationShort(total)}</strong> / 목표 <strong>${b.goalMinutes}분</strong></div>`
+    : `<div class="focus-total-row">총 집중시간 <strong>${formatDurationShort(total)}</strong></div>`;
+
+  return `${hasSessions ? `<div class="session-log">${rows}</div>` : ''}${summaryHtml}`;
 }
 
 /* =========================================================
@@ -1108,6 +1167,9 @@ function renderBlocks() {
             ${b.type === 'routine' ? renderHeatmap(b.carryoverId) : ''}
           </div>
           <div class="card-btns">
+            ${(!complete && !b.carryover) ? `<button class="icon-btn" onclick="openPostponePopup(${b.id})" aria-label="미루기">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="12 6 12 12 16 14"/><path d="M3.05 11a9 9 0 1 0 .5-4"/><polyline points="3 4 3 9 8 9"/></svg>
+            </button>` : ''}
             <button class="timer-icon-btn ${hasTime ? 'has-time' : ''}" onclick="openTimerSheet(${b.id})" aria-label="집중 시간 재기">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg>
             </button>
@@ -1148,29 +1210,6 @@ function renderBlocks() {
 /* =========================================================
    YESTERDAY COPY (수동) — carryover 블록은 자동으로 이어지므로 제외
    ========================================================= */
-function copyYesterday() {
-  const d = keyToDate(viewingDateKey);
-  d.setDate(d.getDate() - 1);
-  const yKey = formatKey(d);
-  const yDay = days[yKey];
-  if (!yDay || !yDay.blocks.length) { showToast('어제 기록이 없어요'); return; }
-
-  const today = ensureDay(viewingDateKey);
-  const nonCarryover = yDay.blocks.filter(b => !b.carryover);
-  if (!nonCarryover.length) { showToast('복사할 블록이 없어요 (이행/루틴/절제 블록은 자동으로 이어져요)'); return; }
-
-  const copied = nonCarryover.map(b => {
-    const nb = { ...b, id: Date.now() + Math.floor(Math.random()*10000) };
-    if (nb.progressType === 'counter') nb.current = 0;
-    if (nb.progressType === 'toggle') nb.done = false;
-    if (nb.progressType === 'timer') { nb.abstainSessions = []; nb.sessions = []; }
-    return nb;
-  });
-  today.blocks = today.blocks.concat(copied);
-  saveDays(); renderBlocks(); renderScore();
-  showToast(`어제 블록 ${copied.length}개를 복사했어요`);
-}
-
 /* =========================================================
    SCORE CALCULATION (절댓값 합산 — 100점 캡 없음)
    각 블록 타입의 weights[type] 값은 "절댓값 점수"다. 완료된 항목은 그 값 전체,
@@ -1298,11 +1337,23 @@ function openTimerSheet(blockId) {
   const found = findBlockById(blockId);
   if (!found) return;
   document.getElementById('timerSheetTitle').textContent = found.block.name;
+  document.getElementById('timerGoalMinutes').value = found.block.goalMinutes || '';
   document.getElementById('manualEntryFields').classList.add('hidden');
   document.getElementById('manualToggleLabel').textContent = '+ 직접 시작·종료 시간으로 추가';
   renderTimerSheet();
   document.getElementById('timerOverlay').classList.add('open');
   if (!timerTickHandle) timerTickHandle = setInterval(timerTick, 1000);
+}
+
+// 시트에서 목표 시간을 입력/수정하면 즉시 블록에 저장하고 카드의 표시도 갱신한다.
+function setTimerGoalMinutes() {
+  const found = findBlockById(timerBlockId);
+  if (!found) return;
+  const val = parseInt(document.getElementById('timerGoalMinutes').value);
+  if (!val || val < 1) delete found.block.goalMinutes;
+  else found.block.goalMinutes = val;
+  saveDays();
+  if (viewingDateKey === found.dateKey) renderBlocks();
 }
 
 function closeTimerSheet() {

@@ -372,6 +372,7 @@ html, body {
 
 .focus-total-row { font-size: 11.5px; color: var(--gray-600); margin-top: 8px; font-weight: 500; }
 .focus-total-row strong { color: var(--black); }
+.focus-total-row.goal-reached strong { color: #2e9e5b; }
 
 .session-log { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
 .session-log-row { font-size: 11px; color: var(--gray-600); display: flex; align-items: baseline; gap: 6px; }
@@ -537,6 +538,8 @@ body.reordering .move-btns { display: flex; }
 .btn-delete:active { opacity: .8; }
 .btn-keep { width: 100%; padding: 12px; border: 1px solid var(--black); border-radius: 10px; background: none; font-size: 15px; font-weight: 500; cursor: pointer; color: var(--black); }
 .btn-keep:active { background: var(--gray-100); }
+.btn-option { width: 100%; padding: 12px; border: 1px solid var(--black); border-radius: 10px; background: none; font-size: 15px; font-weight: 500; cursor: pointer; color: var(--black); margin-bottom: 9px; }
+.btn-option:active { background: var(--gray-100); }
 
 .menu-item { width: 100%; display: flex; align-items: center; gap: 10px; padding: 13px 4px; border: none; background: none; font-size: 14.5px; font-weight: 500; cursor: pointer; color: var(--black); border-bottom: 1px solid var(--gray-200); text-align: left; }
 .menu-item:active { background: var(--gray-100); }

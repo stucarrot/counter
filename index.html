@@ -289,6 +289,14 @@
     <div class="sheet-handle"></div>
     <h2 id="timerSheetTitle">집중 시간 재기</h2>
 
+    <div class="field" style="margin-bottom:14px;">
+      <label>목표 시간 (선택)</label>
+      <div class="split-total-row">
+        <input type="number" id="timerGoalMinutes" placeholder="예: 30" min="1" max="9999" inputmode="numeric" style="width:100px;" onchange="setTimerGoalMinutes()">
+        <span class="split-label-text">분</span>
+      </div>
+    </div>
+
     <div class="timer-display" id="timerDisplay">00:00:00</div>
     <div class="timer-status" id="timerStatus">대기 중</div>
 
@@ -615,6 +623,22 @@
     <button class="btn-keep" onclick="closeOverlay('confirmOverlay')">취소</button>
   </div>
 </div>
+
+<!-- ============ POSTPONE POPUP ============ -->
+<div class="overlay" id="postponeOverlay" onclick="overlayClose(event,'postponeOverlay')">
+  <div class="sheet confirm-sheet">
+    <div class="sheet-handle"></div>
+    <p>이 블록을 언제로 미룰까요?</p>
+    <button class="btn-option" onclick="postponeBlock('tomorrow')">내일로</button>
+    <button class="btn-option" onclick="togglePostponeDateField()">날짜 지정</button>
+    <div class="field hidden" id="postponeDateField" style="margin-top:4px;">
+      <input type="date" id="postponeDateInput">
+      <button class="btn-save" style="width:100%;margin-top:10px;" onclick="postponeBlock('custom')">이 날짜로 미루기</button>
+    </div>
+    <button class="btn-cancel" style="margin-top:10px;" onclick="closeOverlay('postponeOverlay')">취소</button>
+  </div>
+</div>
+
 
 <!-- ============ GAME SPEND SHEET ============ -->
 <div class="overlay" id="spendOverlay" onclick="overlayClose(event,'spendOverlay')">
