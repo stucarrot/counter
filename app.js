@@ -66,6 +66,13 @@ let gameSpendLog = JSON.parse(localStorage.getItem('pc_game_spend_log') || '[]')
 let planBlocks = JSON.parse(localStorage.getItem('pc_plan_blocks') || '[]');
 let periodPlans = JSON.parse(localStorage.getItem('pc_period_plans') || '[]');
 let themePref = localStorage.getItem('pc_theme_pref') || 'system'; // 'system' | 'light' | 'dark'
+// 감상 탭의 날짜-무관 아카이브들 — '종료'와 '예정'은 오늘 원본 블록이 그 상태가 되면
+// 복사본이 생성되고, 그날 동안은 원본 변경이 실시간으로 같이 반영된다(linkedWatchId로 연결).
+// 자정이 지나면(원본이 다음날로 넘어가거나 사라지면) 연결이 끊기고 독립된 데이터로 남는다.
+let watchArchiveItems = JSON.parse(localStorage.getItem('pc_watch_archive_items') || '[]'); // 종료
+let watchPlannedItems = JSON.parse(localStorage.getItem('pc_watch_planned_items') || '[]'); // 예정
+// '목록'은 날짜와 완전히 무관한, 기간계획과 같은 방식으로 다른 감상 블록들을 참조하는 묶음 카드
+let watchLists = JSON.parse(localStorage.getItem('pc_watch_lists') || '[]');
 
 let editBlockId = null;
 let deleteBlockId = null;
@@ -77,13 +84,19 @@ let timerTickHandle = null;
 let viewingMemoDateKey;
 let viewingWatchDateKey;
 let editWatchId = null;
+let editWatchArchiveKind = null; // null(오늘 원본) | 'archive' | 'planned' — openWatchArchiveEdit으로 들어왔을 때 어느 저장소를 고칠지
 let progressEditWatchId = null;
 let watchMemoTargetId = null;
+let watchMemoTargetKind = null; // null(오늘 원본) | 'archive' | 'planned'
 let selectedWatchType = null;
 let editPlanId = null;
 let deletePlanId = null;
 let selectedPlanType = null, selectedPlanTimeMode = null, selectedPlanProgress = null;
 let currentPlanSubtab = 'time';
+let currentWatchSubtab = 'ongoing'; // 'ongoing' | 'planned' | 'archive' | 'list'
+let editWatchListId = null;
+let deleteWatchListId = null;
+let pendingWatchListRefs = []; // 감상 목록 폼 작성 중 임시로 들고 있는 참조 목록
 let editPeriodId = null;
 let selectedPeriodMode = null;
 let pendingPeriodRefs = []; // 기간계획 폼 작성 중 임시로 들고 있는 참조 목록
@@ -117,6 +130,9 @@ function saveWatchChainMeta() { localStorage.setItem('pc_watch_chain_meta', JSON
 function saveMemos() { localStorage.setItem('pc_memos', JSON.stringify(memos)); }
 function savePlanBlocks() { localStorage.setItem('pc_plan_blocks', JSON.stringify(planBlocks)); }
 function savePeriodPlans() { localStorage.setItem('pc_period_plans', JSON.stringify(periodPlans)); }
+function saveWatchArchiveItems() { localStorage.setItem('pc_watch_archive_items', JSON.stringify(watchArchiveItems)); }
+function saveWatchPlannedItems() { localStorage.setItem('pc_watch_planned_items', JSON.stringify(watchPlannedItems)); }
+function saveWatchLists() { localStorage.setItem('pc_watch_lists', JSON.stringify(watchLists)); }
 function saveActiveTimer() {
   if (activeTimer) localStorage.setItem('pc_active_timer', JSON.stringify(activeTimer));
   else localStorage.removeItem('pc_active_timer');
@@ -151,6 +167,40 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// URL 패턴 (http(s):// 또는 www.로 시작) — 문장 끝의 마침표/쉼표/괄호는 링크에서 제외
+const URL_PATTERN = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"]|www\.[^\s<]+[^\s<.,;:!?)\]'"])/gi;
+
+// 표시용으로 너무 긴 링크를 줄여서 보여준다. href는 항상 원본 그대로 유지.
+function shortenUrlForDisplay(url, maxLen) {
+  if (url.length <= maxLen) return url;
+  const withoutProtocol = url.replace(/^https?:\/\//i, '');
+  if (withoutProtocol.length <= maxLen) return withoutProtocol;
+  const head = withoutProtocol.slice(0, Math.max(8, Math.floor(maxLen * 0.6)));
+  const tail = withoutProtocol.slice(-Math.max(4, Math.floor(maxLen * 0.25)));
+  return `${head}…${tail}`;
+}
+
+// 블록 설명/메모 등 사용자가 입력한 텍스트를 안전하게 표시하면서, 그 안의 URL은
+// 클릭 가능한 링크로 바꿔준다. esc()와 마찬가지로 항상 이 함수를 거쳐야 하며,
+// 이스케이프와 링크화를 동시에 처리하므로 escLinkify(text) 결과에 추가로 esc()를 또 적용하면 안 된다.
+function escLinkify(s, maxDisplayLen) {
+  const text = String(s);
+  let result = '';
+  let lastIndex = 0;
+  let m;
+  URL_PATTERN.lastIndex = 0;
+  while ((m = URL_PATTERN.exec(text)) !== null) {
+    result += esc(text.slice(lastIndex, m.index));
+    const rawUrl = m[0];
+    const href = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const display = maxDisplayLen ? shortenUrlForDisplay(rawUrl, maxDisplayLen) : rawUrl;
+    result += `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" class="auto-link" onclick="event.stopPropagation()">${esc(display)}</a>`;
+    lastIndex = m.index + rawUrl.length;
+  }
+  result += esc(text.slice(lastIndex));
+  return result;
+}
+
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -162,6 +212,15 @@ function showToast(msg) {
 /* =========================================================
    TAB SWITCHING
    ========================================================= */
+// 순서변경(드래그/화살표) 버튼은 실제로 정렬할 수 있는 화면에서만 보인다.
+// '감상' 탭 안에서도 서브탭에 따라 다르다: 감상/예정/목록은 정렬 가능, 종료는 날짜순 자동 정렬이라 불가능.
+function updateReorderButtonVisibility() {
+  const showReorder = currentTab === 'todo' || currentTab === 'plan'
+    || (currentTab === 'watch' && currentWatchSubtab !== 'archive');
+  document.getElementById('reorderToggle').classList.toggle('reorder-toggle-hidden', !showReorder);
+  if (reordering && !showReorder) toggleReorder();
+}
+
 function switchTab(tab) {
   checkMidnightRollover(); // 탭을 바꿔서 볼 때마다 날짜가 넘어가 있었는지 한 번 더 확인 (이월 누락 방지)
   currentTab = tab;
@@ -169,10 +228,7 @@ function switchTab(tab) {
     document.getElementById(`tabBtn-${t}`).classList.toggle('active', tab === t);
     document.getElementById(`page-${t}`).classList.toggle('hidden', tab !== t);
   });
-  const showReorder = (tab === 'todo' || tab === 'watch' || tab === 'plan');
-  const reorderBtn = document.getElementById('reorderToggle');
-  reorderBtn.classList.toggle('reorder-toggle-hidden', !showReorder);
-  if (reordering && tab !== 'todo' && tab !== 'watch' && tab !== 'plan') toggleReorder();
+  updateReorderButtonVisibility();
   if (tab === 'memo') {
     renderMemoHeader();
     renderMemos();
@@ -1067,7 +1123,7 @@ function renderBlocks() {
             <button class="move-btn" onclick="moveBlock(${idx},1)" ${idx===day.blocks.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           </div>
         </div>
-        ${b.desc ? `<div class="block-desc">${esc(b.desc)}</div>` : ''}
+        ${b.desc ? `<div class="block-desc">${escLinkify(b.desc, 32)}</div>` : ''}
         ${progressHtml}
         ${renderSessionLog(b)}
       </div>
@@ -1510,44 +1566,55 @@ function onPlanTimeModeChanged() {
 }
 
 /* =========================================================
-   PLAN SUBTAB SWIPE GESTURE
-   계획 탭 안의 작은 탭(시간순/시간미지정/기간계획)을 좌우 스와이프로 전환.
+   SUBTAB SWIPE GESTURE (범용)
+   "큰 탭 속 작은 탭"을 좌우 스와이프로 전환하는 공통 로직.
    가로 이동이 세로 이동보다 뚜렷하게 크고(가로/세로 비율 1.5 이상),
    일정 거리(SWIPE_THRESHOLD) 이상 움직였을 때만 탭 전환으로 인식해서
    세로 스크롤이나 다른 가로 스크롤 요소(날짜 입력 등)와 충돌하지 않게 한다.
-   ========================================================= */
-const PLAN_SUBTAB_ORDER = ['time', 'unspecified', 'period'];
-const SWIPE_THRESHOLD = 55; // px
-let planSwipeStartX = null, planSwipeStartY = null;
 
-function initPlanSubtabSwipe() {
-  const el = document.getElementById('planList');
+   initSubtabSwipe(containerId, order, getCurrent, onSwitch)
+     - containerId : 스와이프를 감지할 리스트 컨테이너의 id
+     - order       : 서브탭 키들의 순서 배열 (예: ['time','unspecified','period'])
+     - getCurrent() : 지금 선택된 서브탭 키를 반환
+     - onSwitch(key) : 그 키로 전환하는 함수 (예: switchPlanSubtab)
+   ========================================================= */
+const SWIPE_THRESHOLD = 55; // px
+
+function initSubtabSwipe(containerId, order, getCurrent, onSwitch) {
+  const el = document.getElementById(containerId);
   if (!el) return;
+  let startX = null, startY = null;
+
   el.addEventListener('touchstart', e => {
     if (e.touches.length !== 1) return;
-    planSwipeStartX = e.touches[0].clientX;
-    planSwipeStartY = e.touches[0].clientY;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
   }, { passive: true });
 
   el.addEventListener('touchend', e => {
-    if (planSwipeStartX === null) return;
+    if (startX === null) return;
     const touch = e.changedTouches[0];
-    const dx = touch.clientX - planSwipeStartX;
-    const dy = touch.clientY - planSwipeStartY;
-    planSwipeStartX = null; planSwipeStartY = null;
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+    startX = null; startY = null;
     if (Math.abs(dx) < SWIPE_THRESHOLD) return; // 너무 짧은 움직임은 무시
     if (Math.abs(dx) < Math.abs(dy) * 1.5) return; // 세로 스크롤 의도일 가능성이 높으면 무시
 
-    const idx = PLAN_SUBTAB_ORDER.indexOf(currentPlanSubtab);
+    const idx = order.indexOf(getCurrent());
     if (idx === -1) return;
-    if (dx < 0 && idx < PLAN_SUBTAB_ORDER.length - 1) {
-      // 왼쪽으로 스와이프 → 다음 탭
-      switchPlanSubtab(PLAN_SUBTAB_ORDER[idx + 1]);
-    } else if (dx > 0 && idx > 0) {
-      // 오른쪽으로 스와이프 → 이전 탭
-      switchPlanSubtab(PLAN_SUBTAB_ORDER[idx - 1]);
-    }
+    if (dx < 0 && idx < order.length - 1) onSwitch(order[idx + 1]);   // 왼쪽으로 스와이프 → 다음 탭
+    else if (dx > 0 && idx > 0) onSwitch(order[idx - 1]);              // 오른쪽으로 스와이프 → 이전 탭
   }, { passive: true });
+}
+
+const PLAN_SUBTAB_ORDER = ['time', 'unspecified', 'period'];
+function initPlanSubtabSwipe() {
+  initSubtabSwipe('planList', PLAN_SUBTAB_ORDER, () => currentPlanSubtab, switchPlanSubtab);
+}
+
+const WATCH_SUBTAB_ORDER = ['ongoing', 'planned', 'archive', 'list'];
+function initWatchSubtabSwipe() {
+  initSubtabSwipe('watchList', WATCH_SUBTAB_ORDER, () => currentWatchSubtab, switchWatchSubtab);
 }
 
 function togglePlanCounterFields() {
@@ -1805,7 +1872,7 @@ function renderPlanList() {
             <button class="move-btn" onclick="movePlanByIndex(${idx},1)" ${idx===list.length-1 || currentPlanSubtab==='time'?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           </div>
         </div>
-        ${p.desc ? `<div class="block-desc">${esc(p.desc)}</div>` : ''}
+        ${p.desc ? `<div class="block-desc">${escLinkify(p.desc, 32)}</div>` : ''}
         ${progressHtml}
       </div>
     </div>`;
@@ -2098,6 +2165,212 @@ function updateRefDate(idx, field, value) {
   if (pendingPeriodRefs[idx]) pendingPeriodRefs[idx][field] = value;
 }
 
+/* =========================================================
+   '목록' 탭 — 날짜와 무관하게 다른 감상 블록들을 참조로 묶어두는 카드.
+   기간계획의 참조 방식과 같은 원리이지만, 날짜 범위 입력은 없다(그냥 포함 여부만).
+   참조 대상은 오늘 날짜의 감상 블록 + 종료/예정 아카이브를 모두 포함한다.
+   ========================================================= */
+function resolveWatchRef(ref) {
+  let item = null;
+  if (ref.kind === 'ongoing') {
+    const todayDay = days[TODAY_KEY()];
+    item = todayDay && (todayDay.watchBlocks || []).find(x => x.id === ref.id);
+  } else if (ref.kind === 'archive') {
+    item = watchArchiveItems.find(x => x.id === ref.id);
+  } else if (ref.kind === 'planned') {
+    item = watchPlannedItems.find(x => x.id === ref.id);
+  }
+  return item ? { name: item.name, meta: `${WATCH_TYPE_LABEL[item.type]} · ${item.progress}%` } : null;
+}
+
+function openWatchRefPicker() {
+  renderWatchRefPickerList();
+  document.getElementById('watchRefPickerOverlay').classList.add('open');
+}
+
+function renderWatchRefPickerList() {
+  const el = document.getElementById('watchRefPickerList');
+  const items = [];
+  const todayDay = days[TODAY_KEY()];
+  (todayDay ? todayDay.watchBlocks || [] : []).forEach(w => {
+    items.push({ kind: 'ongoing', id: w.id, name: w.name, meta: `감상 · ${WATCH_TYPE_LABEL[w.type]} · ${w.progress}%` });
+  });
+  watchPlannedItems.forEach(item => {
+    items.push({ kind: 'planned', id: item.id, name: item.name, meta: `예정 · ${WATCH_TYPE_LABEL[item.type]}` });
+  });
+  watchArchiveItems.forEach(item => {
+    items.push({ kind: 'archive', id: item.id, name: item.name, meta: `종료 · ${WATCH_TYPE_LABEL[item.type]}` });
+  });
+
+  if (!items.length) {
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 감상 블록이 없어요</p></div>`;
+    return;
+  }
+
+  el.innerHTML = items.map(item => {
+    const isSelected = pendingWatchListRefs.some(r => r.kind === item.kind && r.id === item.id);
+    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleWatchRefSelection('${item.kind}',${item.id})">
+      <span>${esc(item.name)}</span>
+      <span class="ref-picker-item-meta">${esc(item.meta)}</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleWatchRefSelection(kind, id) {
+  const idx = pendingWatchListRefs.findIndex(r => r.kind === kind && r.id === id);
+  if (idx >= 0) pendingWatchListRefs.splice(idx, 1);
+  else pendingWatchListRefs.push({ kind, id });
+  renderWatchRefPickerList();
+  renderPendingWatchListRefs();
+}
+
+function removePendingWatchListRef(idx) {
+  pendingWatchListRefs.splice(idx, 1);
+  renderPendingWatchListRefs();
+}
+
+function renderPendingWatchListRefs() {
+  const el = document.getElementById('wlRefList');
+  if (!pendingWatchListRefs.length) {
+    el.innerHTML = `<div class="ref-item-missing" style="padding:6px 2px;">아직 참조한 블록이 없어요</div>`;
+    return;
+  }
+  el.innerHTML = pendingWatchListRefs.map((ref, idx) => {
+    const resolved = resolveWatchRef(ref);
+    const label = resolved ? resolved.name : '(삭제된 블록)';
+    return `<div class="ref-item">
+      <span class="ref-item-name ${!resolved?'ref-item-missing':''}">${esc(label)}</span>
+      <button class="ref-item-remove" onclick="removePendingWatchListRef(${idx})" aria-label="제거">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+}
+
+function openWatchListAdd() {
+  editWatchListId = null;
+  document.getElementById('watchListSheetTitle').textContent = '목록 추가';
+  document.getElementById('wlName').value = '';
+  document.getElementById('wlDesc').value = '';
+  pendingWatchListRefs = [];
+  renderPendingWatchListRefs();
+  document.getElementById('watchListFormOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('wlName').focus(), 80);
+}
+
+function openWatchListEdit(id) {
+  const wl = watchLists.find(x => x.id === id);
+  if (!wl) return;
+  editWatchListId = id;
+  document.getElementById('watchListSheetTitle').textContent = '목록 수정';
+  document.getElementById('wlName').value = wl.name;
+  document.getElementById('wlDesc').value = wl.desc || '';
+  pendingWatchListRefs = (wl.refs || []).slice();
+  renderPendingWatchListRefs();
+  document.getElementById('watchListFormOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('wlName').focus(), 80);
+}
+
+function submitWatchListForm() {
+  const name = document.getElementById('wlName').value.trim();
+  const desc = document.getElementById('wlDesc').value.trim();
+  if (!name) { document.getElementById('wlName').focus(); return; }
+
+  if (editWatchListId !== null) {
+    const wl = watchLists.find(x => x.id === editWatchListId);
+    if (wl) { wl.name = name; wl.desc = desc; wl.refs = pendingWatchListRefs.slice(); }
+  } else {
+    watchLists.push({
+      id: Date.now() + Math.floor(Math.random()*1000),
+      name, desc, refs: pendingWatchListRefs.slice(), order: watchLists.length
+    });
+  }
+  saveWatchLists();
+  renderWatchListTab();
+  closeOverlay('watchListFormOverlay');
+}
+
+function askDeleteWatchList(id) {
+  const wl = watchLists.find(x => x.id === id);
+  if (!wl) return;
+  deleteWatchListId = id;
+  document.getElementById('confirmMsg').innerHTML = `<strong>${esc(wl.name)}</strong> 목록을 삭제할까요?<br>참조된 감상 블록들은 그대로 남아요.`;
+  document.getElementById('confirmOkBtn').onclick = () => {
+    watchLists = watchLists.filter(x => x.id !== deleteWatchListId);
+    saveWatchLists();
+    renderWatchListTab();
+    closeOverlay('confirmOverlay');
+  };
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function moveWatchListItem(idx, dir) {
+  const sorted = watchLists.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const target = idx + dir;
+  if (target < 0 || target >= sorted.length) return;
+  [sorted[idx], sorted[target]] = [sorted[target], sorted[idx]];
+  sorted.forEach((item, i) => { item.order = i; });
+  saveWatchLists();
+  renderWatchListTab();
+}
+
+function renderWatchListTab() {
+  const el = document.getElementById('watchList');
+  if (!watchLists.length) {
+    el.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+      <p>읽는 중인 책 현황처럼, 감상 블록들을 모아볼 목록을 만들어보세요</p>
+    </div>`;
+    return;
+  }
+  const sorted = watchLists.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  el.innerHTML = sorted.map((wl, idx) => {
+    const refs = (wl.refs || []).map(resolveWatchRef).filter(Boolean);
+    const refsHtml = refs.length
+      ? `<div class="ref-list" style="margin-top:8px;">${refs.map(r => `<div class="ref-item"><span class="ref-item-name">${esc(r.name)}</span><span class="ref-picker-item-meta">${esc(r.meta)}</span></div>`).join('')}</div>`
+      : `<div class="ref-item-missing" style="margin-top:8px;">참조한 블록이 없어요</div>`;
+    return `<div class="card block-card type-unspecified" data-id="${wl.id}">
+      <div class="reorder-handle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </div>
+      <div class="card-main">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <div class="card-title">${esc(wl.name)}</div>
+          </div>
+          <div class="card-btns">
+            <button class="icon-btn" onclick="openWatchListEdit(${wl.id})" aria-label="수정">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="icon-btn" onclick="askDeleteWatchList(${wl.id})" aria-label="삭제">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+          <div class="move-btns">
+            <button class="move-btn" onclick="moveWatchListItem(${idx},-1)" ${idx===0?'disabled':''} aria-label="위로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button class="move-btn" onclick="moveWatchListItem(${idx},1)" ${idx===sorted.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          </div>
+        </div>
+        ${wl.desc ? `<div class="block-desc">${escLinkify(wl.desc, 32)}</div>` : ''}
+        ${refsHtml}
+      </div>
+    </div>`;
+  }).join('');
+
+  registerDragReorder('watchList',
+    () => sorted,
+    (fromIdx, toIdx) => {
+      const order = sorted.slice();
+      const [moved] = order.splice(fromIdx, 1);
+      order.splice(toIdx, 0, moved);
+      order.forEach((item, i) => { item.order = i; });
+      saveWatchLists();
+      renderWatchListTab();
+    }
+  );
+}
+
 function renderPeriodList(el) {
   const list = periodPlans.slice().sort((a, b) => (a.dateStart || '').localeCompare(b.dateStart || ''));
   if (!list.length) {
@@ -2135,7 +2408,7 @@ function renderPeriodList(el) {
       <div class="card-header">
         <div class="card-title-wrap">
           <div class="period-date-range">${esc(periodDateRangeLabel(pp))}</div>
-          ${pp.desc ? `<div class="period-desc">${esc(pp.desc)}</div>` : ''}
+          ${pp.desc ? `<div class="period-desc">${escLinkify(pp.desc, 32)}</div>` : ''}
         </div>
         <div class="card-btns">
           <button class="icon-btn" onclick="openPeriodPlanEdit(${pp.id})" aria-label="수정">
@@ -2168,6 +2441,23 @@ function jumpWatchToday() {
   renderWatchBlocks();
 }
 
+const WATCH_SUBTAB_TITLE = { ongoing: '감상', planned: '예정', archive: '종료', list: '목록' };
+
+function switchWatchSubtab(sub) {
+  currentWatchSubtab = sub;
+  WATCH_SUBTAB_ORDER.forEach(s => {
+    document.getElementById(`watchSubtab-${s}`).classList.toggle('active', sub === s);
+  });
+  document.getElementById('watchPageBarTitle').textContent = WATCH_SUBTAB_TITLE[sub];
+  // '감상' 서브탭만 날짜 단위로 보는 화면이라 날짜 바가 필요하고, 나머지 셋은 날짜와 무관한 아카이브.
+  document.getElementById('watchDayBar').classList.toggle('hidden', sub !== 'ongoing');
+  // '감상/예정/종료'는 같은 추가 폼(감상 추가)을 공유하고, '목록'만 별도의 추가 폼을 쓴다.
+  document.getElementById('watchAddBtn').classList.toggle('hidden', sub === 'list');
+  document.getElementById('watchListAddBtn').classList.toggle('hidden', sub !== 'list');
+  updateReorderButtonVisibility();
+  renderWatchBlocks();
+}
+
 function renderWatchHeader() {
   const today = TODAY_KEY();
   const d = keyToDate(viewingWatchDateKey);
@@ -2180,12 +2470,16 @@ function renderWatchHeader() {
 
 function openWatchAdd() {
   editWatchId = null;
+  editWatchArchiveKind = null;
   document.getElementById('watchSheetTitle').textContent = '감상 추가';
   document.getElementById('wfName').value = '';
   document.getElementById('wfAuthor').value = '';
   document.getElementById('wfProgress').value = '0';
-  document.getElementById('wfArchive').checked = false;
-  document.getElementById('wfPlanned').checked = false;
+  // '예정'/'종료' 서브탭에서 추가하면 그 상태로 바로 시작되게 한다 ('종료'는 보관 체크로 처리)
+  document.getElementById('wfArchive').checked = (currentWatchSubtab === 'archive');
+  document.getElementById('wfPlanned').checked = (currentWatchSubtab === 'planned');
+  document.getElementById('wfPlannedField').classList.remove('hidden');
+  document.getElementById('wfArchiveField').classList.remove('hidden');
   selectedWatchType = null;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('watchFormOverlay').classList.add('open');
@@ -2197,12 +2491,15 @@ function openWatchEdit(id) {
   const w = day.watchBlocks.find(x => x.id === id);
   if (!w) return;
   editWatchId = id;
+  editWatchArchiveKind = null;
   document.getElementById('watchSheetTitle').textContent = '감상 수정';
   document.getElementById('wfName').value = w.name;
   document.getElementById('wfAuthor').value = w.author || '';
   document.getElementById('wfProgress').value = w.progress;
   document.getElementById('wfArchive').checked = !!w.archived;
   document.getElementById('wfPlanned').checked = !!w.planned;
+  document.getElementById('wfPlannedField').classList.remove('hidden');
+  document.getElementById('wfArchiveField').classList.remove('hidden');
   selectedWatchType = w.type;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === w.type));
   document.getElementById('watchFormOverlay').classList.add('open');
@@ -2220,10 +2517,17 @@ function submitWatchForm() {
   if (isNaN(progress)) progress = 0;
   progress = Math.max(0, Math.min(100, progress));
 
+  // '종료'/'예정' 탭에서 직접 연 수정 폼이면 오늘 원본이 아니라 해당 아카이브 항목을 고친다.
+  if (editWatchArchiveKind !== null) {
+    submitWatchArchiveItemEdit(name, author, progress, archived, planned);
+    return;
+  }
+
   const day = ensureDay(viewingWatchDateKey);
 
+  let w;
   if (editWatchId !== null) {
-    const w = day.watchBlocks.find(x => x.id === editWatchId);
+    w = day.watchBlocks.find(x => x.id === editWatchId);
     if (w) {
       w.name = name; w.author = author; w.type = selectedWatchType;
       w.progress = progress; w.archived = archived; w.planned = planned;
@@ -2236,17 +2540,59 @@ function submitWatchForm() {
     }
   } else {
     const chainId = 'w' + Date.now() + Math.floor(Math.random()*1000);
-    const watchBlock = {
+    w = {
       id: Date.now() + Math.floor(Math.random()*1000),
       name, author, type: selectedWatchType, progress, archived, planned,
       watchChainId: chainId, memos: []
     };
     watchChainMeta[chainId] = { stopped: progress >= 100 || archived };
     saveWatchChainMeta();
-    day.watchBlocks.push(watchBlock);
+    day.watchBlocks.push(w);
   }
 
   saveDays(); renderWatchBlocks(); renderScore(); closeOverlay('watchFormOverlay');
+  if (w) syncWatchArchiveLink(w, viewingWatchDateKey);
+}
+
+// '종료'/'예정' 탭에서 직접 연 수정 폼 제출 처리.
+// 아직 오늘 원본과 연결돼 있다면 원본도 같은 내용으로 같이 갱신해서 자연스럽게 동기화되게 한다.
+function submitWatchArchiveItemEdit(name, author, progress, archived, planned) {
+  const kind = editWatchArchiveKind;
+  const store = getWatchArchiveStore(kind);
+  const item = store.find(x => x.id === editWatchId);
+  if (!item) { closeOverlay('watchFormOverlay'); return; }
+
+  item.name = name; item.author = author; item.type = selectedWatchType; item.progress = progress;
+  if (kind === 'archive') item.archived = archived;
+
+  const isLinked = item.linkedWatchId !== null && item.linkedWatchId !== undefined;
+  if (isLinked) {
+    const todayDay = ensureDay(TODAY_KEY());
+    const w = todayDay.watchBlocks.find(x => x.id === item.linkedWatchId);
+    if (w) {
+      w.name = name; w.author = author; w.type = selectedWatchType; w.progress = progress;
+      if (kind === 'archive') w.archived = archived;
+      if (kind === 'planned') w.planned = planned;
+      if (w.watchChainId) {
+        watchChainMeta[w.watchChainId] = { stopped: w.progress >= 100 || w.archived };
+        saveWatchChainMeta();
+      }
+      saveDays();
+      syncWatchArchiveLink(w, TODAY_KEY()); // 조건이 깨졌으면 이 함수가 store에서 알맞게 제거/갱신해줌
+      renderWatchBlocks(); renderScore(); closeOverlay('watchFormOverlay');
+      return;
+    }
+  }
+
+  // 연결이 끊긴(자정을 넘긴) 독립 항목 — 자체적으로 조건을 다시 확인해서 안 맞으면 제거
+  const stillQualifies = kind === 'archive' ? (progress >= 100 || archived) : planned;
+  if (!stillQualifies) {
+    if (kind === 'archive') { watchArchiveItems = watchArchiveItems.filter(x => x.id !== item.id); saveWatchArchiveItems(); }
+    else { watchPlannedItems = watchPlannedItems.filter(x => x.id !== item.id); saveWatchPlannedItems(); }
+  } else {
+    saveWatchArchiveStore(kind);
+  }
+  renderWatchBlocks(); renderScore(); closeOverlay('watchFormOverlay');
 }
 
 function askDeleteWatch(id) {
@@ -2261,6 +2607,12 @@ function askDeleteWatch(id) {
       watchChainMeta[w.watchChainId] = { stopped: true };
       saveWatchChainMeta();
     }
+    // 오늘 원본과 아직 연결된(자정을 안 넘긴) 아카이브 복사본도 같이 삭제
+    const beforeArchiveLen = watchArchiveItems.length, beforePlannedLen = watchPlannedItems.length;
+    watchArchiveItems = watchArchiveItems.filter(x => x.linkedWatchId !== w.id);
+    watchPlannedItems = watchPlannedItems.filter(x => x.linkedWatchId !== w.id);
+    if (watchArchiveItems.length !== beforeArchiveLen) saveWatchArchiveItems();
+    if (watchPlannedItems.length !== beforePlannedLen) saveWatchPlannedItems();
     saveDays(); renderWatchBlocks(); renderScore(); closeOverlay('confirmOverlay');
   };
   document.getElementById('confirmOverlay').classList.add('open');
@@ -2302,6 +2654,7 @@ function submitWatchProgress() {
     saveWatchChainMeta();
   }
   saveDays(); renderWatchBlocks(); renderScore(); closeOverlay('watchProgressOverlay');
+  syncWatchArchiveLink(w, viewingWatchDateKey);
 }
 
 function toggleWatchArchive(id) {
@@ -2314,6 +2667,7 @@ function toggleWatchArchive(id) {
     saveWatchChainMeta();
   }
   saveDays(); renderWatchBlocks(); renderScore();
+  syncWatchArchiveLink(w, viewingWatchDateKey);
 }
 
 function toggleWatchPlanned(id) {
@@ -2322,6 +2676,74 @@ function toggleWatchPlanned(id) {
   if (!w) return;
   w.planned = !w.planned;
   saveDays(); renderWatchBlocks(); renderScore();
+  syncWatchArchiveLink(w, viewingWatchDateKey);
+}
+
+/* =========================================================
+   감상 '종료'/'예정' 아카이브 동기화
+   오늘 날짜의 감상 블록 w가 종료 조건(progress>=100 또는 archived) 또는
+   예정 조건(planned)을 만족하면 그 아카이브에 복사본을 만들고, 만족하는 동안은
+   원본을 고칠 때마다 그 복사본도 같은 내용으로 갱신한다. 조건이 깨지면 복사본은
+   삭제된다 (단, 이미 자정을 넘겨 독립된 복사본은 원본과 무관하므로 건드리지 않음).
+   linkedWatchId가 있는 항목만 "오늘 원본과 연결된" 상태로 본다.
+   ========================================================= */
+function syncWatchArchiveLink(w, dateKey) {
+  const isFinished = w.progress >= 100 || w.archived;
+  const isPlanned = !!w.planned;
+
+  // 종료 아카이브
+  let archiveItem = watchArchiveItems.find(x => x.linkedWatchId === w.id);
+  if (isFinished) {
+    if (!archiveItem) {
+      archiveItem = {
+        id: Date.now() + Math.floor(Math.random()*100000),
+        linkedWatchId: w.id, name: w.name, author: w.author, type: w.type,
+        progress: w.progress, archived: w.archived,
+        finishedDate: dateKey, memos: (w.memos || []).slice(),
+        order: watchArchiveItems.length,
+      };
+      watchArchiveItems.push(archiveItem);
+    } else {
+      archiveItem.name = w.name; archiveItem.author = w.author; archiveItem.type = w.type;
+      archiveItem.progress = w.progress; archiveItem.archived = w.archived;
+      archiveItem.finishedDate = dateKey; archiveItem.memos = (w.memos || []).slice();
+    }
+    saveWatchArchiveItems();
+  } else if (archiveItem) {
+    // 조건이 깨졌는데 아직 오늘 원본과 연결된 상태라면(자정을 안 넘김) 복사본을 제거
+    watchArchiveItems = watchArchiveItems.filter(x => x !== archiveItem);
+    saveWatchArchiveItems();
+  }
+
+  // 예정 아카이브
+  let plannedItem = watchPlannedItems.find(x => x.linkedWatchId === w.id);
+  if (isPlanned) {
+    if (!plannedItem) {
+      plannedItem = {
+        id: Date.now() + Math.floor(Math.random()*100000) + 1,
+        linkedWatchId: w.id, name: w.name, author: w.author, type: w.type,
+        progress: w.progress, memos: (w.memos || []).slice(),
+        order: watchPlannedItems.length,
+      };
+      watchPlannedItems.push(plannedItem);
+    } else {
+      plannedItem.name = w.name; plannedItem.author = w.author; plannedItem.type = w.type;
+      plannedItem.progress = w.progress; plannedItem.memos = (w.memos || []).slice();
+    }
+    saveWatchPlannedItems();
+  } else if (plannedItem) {
+    watchPlannedItems = watchPlannedItems.filter(x => x !== plannedItem);
+    saveWatchPlannedItems();
+  }
+}
+
+// 자정이 지나 날짜가 넘어갈 때 호출 — 그 시점까지 오늘 원본과 연결되어 있던 아카이브
+// 항목들의 연결을 끊어서, 원본이 사라지거나 다음날로 이어지는 것과 무관하게 독립시킨다.
+function detachWatchArchiveLinks() {
+  let changed = false;
+  watchArchiveItems.forEach(x => { if (x.linkedWatchId !== null && x.linkedWatchId !== undefined) { x.linkedWatchId = null; changed = true; } });
+  watchPlannedItems.forEach(x => { if (x.linkedWatchId !== null && x.linkedWatchId !== undefined) { x.linkedWatchId = null; changed = true; } });
+  if (changed) { saveWatchArchiveItems(); saveWatchPlannedItems(); }
 }
 
 // 전날 같은 체인의 블록을 찾아 오늘 대비 변화량(%p)을 계산. 없으면 null.
@@ -2336,6 +2758,13 @@ function watchDeltaForToday(w, dateKey) {
 }
 
 function renderWatchBlocks() {
+  if (currentWatchSubtab === 'ongoing') renderWatchOngoing();
+  else if (currentWatchSubtab === 'planned') renderWatchPlannedTab();
+  else if (currentWatchSubtab === 'archive') renderWatchArchiveTab();
+  else if (currentWatchSubtab === 'list') renderWatchListTab();
+}
+
+function renderWatchOngoing() {
   const day = ensureDay(viewingWatchDateKey);
   const el = document.getElementById('watchList');
   if (!day.watchBlocks.length) {
@@ -2419,9 +2848,197 @@ function renderWatchBlocks() {
   );
 }
 
-/* ---------- 감상 메모 (시간재기 시트와 동일한 틀, 메모탭 인터페이스 재사용) ---------- */
+/* =========================================================
+   '종료' 탭 — 완료(100%) 또는 보관된 감상의 날짜-무관 아카이브.
+   종료/보관된 날짜 기준 최근순으로 자동 정렬 (수동 정렬 없음).
+   ========================================================= */
+function renderWatchArchiveTab() {
+  const el = document.getElementById('watchList');
+  if (!watchArchiveItems.length) {
+    el.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="13" x2="16" y2="13"/></svg>
+      <p>다 읽었거나 보관한 감상이 여기 모여요</p>
+    </div>`;
+    return;
+  }
+  const sorted = watchArchiveItems.slice().sort((a, b) => (b.finishedDate || '').localeCompare(a.finishedDate || ''));
+
+  el.innerHTML = sorted.map(item => {
+    const memoCount = (item.memos || []).length;
+    return `<div class="card watch-card type-watch-${item.type}" data-id="${item.id}">
+      <div class="card-main">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <div class="card-title">${esc(item.name)}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}<span class="time-chip">${formatArchiveDateLabel(item.finishedDate)}</span>${item.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
+          </div>
+          <div class="card-btns">
+            <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchArchiveMemo('archive',${item.id})" aria-label="감상 메모">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </button>
+            <button class="icon-btn" onclick="openWatchArchiveEdit('archive',${item.id})" aria-label="수정">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="icon-btn" onclick="askDeleteWatchArchiveItem('archive',${item.id})" aria-label="삭제">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="block-progress-row">
+          <span class="watch-progress-btn" style="cursor:default;">${item.progress}%</span>
+          <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${item.progress}%"></div></div></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function formatArchiveDateLabel(dateKey) {
+  if (!dateKey) return '';
+  const d = keyToDate(dateKey);
+  return `${d.getMonth()+1}/${d.getDate()} 종료`;
+}
+
+/* =========================================================
+   '예정' 탭 — 예정 체크된 감상의 날짜-무관 아카이브. 할일 탭처럼 수동 정렬(화살표/드래그) 가능.
+   ========================================================= */
+function renderWatchPlannedTab() {
+  const el = document.getElementById('watchList');
+  if (!watchPlannedItems.length) {
+    el.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="13" x2="16" y2="13"/></svg>
+      <p>예정으로 체크한 감상이 여기 모여요</p>
+    </div>`;
+    return;
+  }
+  const sorted = watchPlannedItems.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  el.innerHTML = sorted.map((item, idx) => {
+    const memoCount = (item.memos || []).length;
+    return `<div class="card watch-card type-watch-${item.type}" data-id="${item.id}">
+      <div class="reorder-handle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </div>
+      <div class="card-main">
+        <div class="card-header">
+          <div class="card-title-wrap">
+            <div class="card-title">${esc(item.name)}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}</div>
+          </div>
+          <div class="card-btns">
+            <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchArchiveMemo('planned',${item.id})" aria-label="감상 메모">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </button>
+            <button class="icon-btn" onclick="openWatchArchiveEdit('planned',${item.id})" aria-label="수정">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="icon-btn" onclick="askDeleteWatchArchiveItem('planned',${item.id})" aria-label="삭제">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            </button>
+          </div>
+          <div class="move-btns">
+            <button class="move-btn" onclick="moveWatchPlannedItem(${idx},-1)" ${idx===0?'disabled':''} aria-label="위로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button class="move-btn" onclick="moveWatchPlannedItem(${idx},1)" ${idx===sorted.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          </div>
+        </div>
+        <div class="block-progress-row">
+          <span class="watch-progress-btn" style="cursor:default;">${item.progress}%</span>
+          <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${item.progress}%"></div></div></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  registerDragReorder('watchList',
+    () => sorted,
+    (fromIdx, toIdx) => {
+      const order = sorted.slice();
+      const [moved] = order.splice(fromIdx, 1);
+      order.splice(toIdx, 0, moved);
+      order.forEach((item, i) => { item.order = i; });
+      saveWatchPlannedItems();
+      renderWatchPlannedTab();
+    }
+  );
+}
+
+function moveWatchPlannedItem(idx, dir) {
+  const sorted = watchPlannedItems.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const target = idx + dir;
+  if (target < 0 || target >= sorted.length) return;
+  [sorted[idx], sorted[target]] = [sorted[target], sorted[idx]];
+  sorted.forEach((item, i) => { item.order = i; });
+  saveWatchPlannedItems();
+  renderWatchPlannedTab();
+}
+
+// '종료'/'예정' 아카이브 항목 공용 헬퍼들 (kind: 'archive' | 'planned')
+function getWatchArchiveStore(kind) { return kind === 'archive' ? watchArchiveItems : watchPlannedItems; }
+function saveWatchArchiveStore(kind) { if (kind === 'archive') saveWatchArchiveItems(); else saveWatchPlannedItems(); }
+
+function openWatchArchiveMemo(kind, id) {
+  const store = getWatchArchiveStore(kind);
+  const item = store.find(x => x.id === id);
+  if (!item) return;
+  watchMemoTargetId = id;
+  watchMemoTargetKind = kind;
+  document.getElementById('watchMemoTitle').textContent = `${item.name} — 감상 메모`;
+  renderWatchMemoList();
+  document.getElementById('watchMemoOverlay').classList.add('open');
+}
+
+function openWatchArchiveEdit(kind, id) {
+  const store = getWatchArchiveStore(kind);
+  const item = store.find(x => x.id === id);
+  if (!item) return;
+  editWatchId = id;
+  editWatchArchiveKind = kind;
+  document.getElementById('watchSheetTitle').textContent = '감상 수정';
+  document.getElementById('wfName').value = item.name;
+  document.getElementById('wfAuthor').value = item.author || '';
+  document.getElementById('wfProgress').value = item.progress;
+  document.getElementById('wfArchive').checked = kind === 'archive' ? !!item.archived : false;
+  document.getElementById('wfPlanned').checked = kind === 'planned';
+  // 종료 탭에서 열었으면 '예정' 체크는 의미가 없고, 예정 탭에서 열었으면 '보관' 체크는 의미가 없다.
+  document.getElementById('wfPlannedField').classList.toggle('hidden', kind === 'archive');
+  document.getElementById('wfArchiveField').classList.toggle('hidden', kind === 'planned');
+  selectedWatchType = item.type;
+  document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === item.type));
+  document.getElementById('watchFormOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('wfName').focus(), 80);
+}
+
+function askDeleteWatchArchiveItem(kind, id) {
+  const store = getWatchArchiveStore(kind);
+  const item = store.find(x => x.id === id);
+  if (!item) return;
+  const label = kind === 'archive' ? '종료' : '예정';
+  const isLinked = item.linkedWatchId !== null && item.linkedWatchId !== undefined;
+  if (isLinked) {
+    // 오늘 원본과 아직 연결된 상태라면, 직접 지우는 대신 원본의 체크를 해제하도록 안내한다.
+    // (자동으로 원본의 진행도/체크를 건드리면 의도와 다르게 동작할 수 있어 더 명확한 경로로 유도)
+    showToast(`오늘 감상 탭에서 ${kind === 'archive' ? '보관 체크나 진행도를' : '예정 체크를'} 직접 해제해주세요`);
+    return;
+  }
+  document.getElementById('confirmMsg').innerHTML = `<strong>${esc(item.name)}</strong>을 ${label} 목록에서 삭제할까요?<br>이 작업은 되돌릴 수 없어요.`;
+  document.getElementById('confirmOkBtn').onclick = () => {
+    if (kind === 'archive') {
+      watchArchiveItems = watchArchiveItems.filter(x => x.id !== id);
+      saveWatchArchiveItems();
+    } else {
+      watchPlannedItems = watchPlannedItems.filter(x => x.id !== id);
+      saveWatchPlannedItems();
+    }
+    renderWatchBlocks();
+    closeOverlay('confirmOverlay');
+  };
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+
 function openWatchMemo(id) {
   watchMemoTargetId = id;
+  watchMemoTargetKind = null;
   const found = findWatchById(id);
   if (!found) return;
   document.getElementById('watchMemoTitle').textContent = `${found.w.name} — 감상 메모`;
@@ -2429,7 +3046,14 @@ function openWatchMemo(id) {
   document.getElementById('watchMemoOverlay').classList.add('open');
 }
 
+// watchMemoTargetKind가 설정돼 있으면(종료/예정 아카이브에서 연 메모) 그 저장소에서 찾고,
+// 아니면(null) 오늘 날짜의 원본 감상 블록에서 찾는다.
 function findWatchById(id) {
+  if (watchMemoTargetKind === 'archive' || watchMemoTargetKind === 'planned') {
+    const store = getWatchArchiveStore(watchMemoTargetKind);
+    const item = store.find(x => x.id === id);
+    return item ? { w: item, dateKey: null } : null;
+  }
   for (const key of [viewingWatchDateKey]) {
     const dayObj = days[key];
     if (!dayObj) continue;
@@ -2454,10 +3078,41 @@ function sendWatchMemo() {
   if (!found) return;
   if (!found.w.memos) found.w.memos = [];
   found.w.memos.push({ id: Date.now() + Math.floor(Math.random()*1000), text, time: new Date().toISOString() });
-  saveDays();
+  saveWatchMemoTarget();
+  syncLinkedWatchMemos();
   input.value = '';
   input.style.height = 'auto';
   renderWatchMemoList();
+}
+
+// 메모가 어느 저장소(오늘 원본 / 종료 아카이브 / 예정 아카이브)에 속하는지에 맞춰 저장한다.
+function saveWatchMemoTarget() {
+  if (watchMemoTargetKind === 'archive') saveWatchArchiveItems();
+  else if (watchMemoTargetKind === 'planned') saveWatchPlannedItems();
+  else saveDays();
+}
+
+// 지금 메모를 추가/삭제한 대상이 아카이브 항목이고, 아직 오늘 원본과 연결돼 있다면
+// (또는 반대로 오늘 원본에서 메모를 고쳤고 그 원본이 아카이브와 연결돼 있다면)
+// 양쪽의 memos를 같은 내용으로 맞춰서 "그날 동안은 공유" 요구사항을 지킨다.
+function syncLinkedWatchMemos() {
+  if (watchMemoTargetKind === 'archive' || watchMemoTargetKind === 'planned') {
+    const store = getWatchArchiveStore(watchMemoTargetKind);
+    const item = store.find(x => x.id === watchMemoTargetId);
+    if (!item || item.linkedWatchId === null || item.linkedWatchId === undefined) return;
+    const todayDay = ensureDay(TODAY_KEY());
+    const w = todayDay.watchBlocks.find(x => x.id === item.linkedWatchId);
+    if (w) { w.memos = (item.memos || []).slice(); saveDays(); }
+  } else {
+    // 오늘 원본에서 메모를 고친 경우 — 연결된 아카이브 항목이 있으면 같이 맞춘다
+    const day = ensureDay(viewingWatchDateKey);
+    const w = day.watchBlocks.find(x => x.id === watchMemoTargetId);
+    if (!w) return;
+    const archiveItem = watchArchiveItems.find(x => x.linkedWatchId === w.id);
+    if (archiveItem) { archiveItem.memos = (w.memos || []).slice(); saveWatchArchiveItems(); }
+    const plannedItem = watchPlannedItems.find(x => x.linkedWatchId === w.id);
+    if (plannedItem) { plannedItem.memos = (w.memos || []).slice(); saveWatchPlannedItems(); }
+  }
 }
 
 function copyWatchMemo(memoId) {
@@ -2476,7 +3131,8 @@ function deleteWatchMemo(memoId) {
   const found = findWatchById(watchMemoTargetId);
   if (!found) return;
   found.w.memos = (found.w.memos || []).filter(x => x.id !== memoId);
-  saveDays();
+  saveWatchMemoTarget();
+  syncLinkedWatchMemos();
   renderWatchMemoList();
 }
 
@@ -2492,7 +3148,7 @@ function renderWatchMemoList() {
     const t = new Date(m.time);
     const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
     return `<div class="memo-bubble">
-      <div class="memo-text">${esc(m.text)}</div>
+      <div class="memo-text">${escLinkify(m.text, 40)}</div>
       <div class="memo-meta-row">
         <span class="memo-time">${timeStr}</span>
         <button class="memo-copy-btn" onclick="copyWatchMemo(${m.id})">복사</button>
@@ -2554,17 +3210,23 @@ function dayWatchScoreFraction(day) {
 /* =========================================================
    AUTO-ROLLOVER (오전 4시 기준)
    ========================================================= */
-let lastKnownTodayKey = TODAY_KEY();
+// 마지막으로 "오늘"로 인식했던 날짜를 영구 저장해서, 페이지를 새로고침해도 자정을
+// 실제로 넘겼는지(진짜 새 날인지)를 정확히 구분한다. 이게 없으면 같은 날 안에 새로고침할
+// 때마다 detachWatchArchiveLinks 같은 "날짜가 바뀔 때만 해야 하는 작업"이 매번 실행되어 버린다.
+let lastKnownTodayKey = localStorage.getItem('pc_last_known_today') || TODAY_KEY();
+function saveLastKnownTodayKey() { localStorage.setItem('pc_last_known_today', lastKnownTodayKey); }
 
 function checkMidnightRollover() {
   const today = TODAY_KEY();
   if (today !== lastKnownTodayKey) {
     lastKnownTodayKey = today;
+    saveLastKnownTodayKey();
     // 어제 날짜가 마무리됐으므로 게임 포인트를 재계산
     reconcileGamePoints();
     if (currentTab === 'game') renderGamePoints();
     const added = syncCarryoversForToday();
     const watchAdded = syncWatchForToday();
+    detachWatchArchiveLinks(); // 어제까지 연결되어 있던 종료/예정 복사본들을 독립시킴
     if (viewingDateKey === today) {
       renderBlocks();
       if (added > 0) showToast(`이어지는 블록 ${added}개가 오늘 목록에 추가됐어요`);
@@ -2773,7 +3435,7 @@ function renderMemos() {
     const t = new Date(m.time);
     const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
     return `<div class="memo-bubble">
-      <div class="memo-text">${esc(m.text)}</div>
+      <div class="memo-text">${escLinkify(m.text, 40)}</div>
       <div class="memo-meta-row">
         <span class="memo-time">${timeStr}</span>
         <button class="memo-copy-btn" onclick="copyMemo(${m.id})">복사</button>
@@ -2920,7 +3582,7 @@ function saveMenuSettings() {
 }
 
 function exportBackup() {
-  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, exportedAt: new Date().toISOString() };
+  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, watchArchiveItems, watchPlannedItems, watchLists, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2951,8 +3613,11 @@ function importBackup(e) {
       if (Array.isArray(data.gameSpendLog)) gameSpendLog = data.gameSpendLog;
       if (Array.isArray(data.planBlocks)) planBlocks = data.planBlocks;
       if (Array.isArray(data.periodPlans)) periodPlans = data.periodPlans;
+      if (Array.isArray(data.watchArchiveItems)) watchArchiveItems = data.watchArchiveItems;
+      if (Array.isArray(data.watchPlannedItems)) watchPlannedItems = data.watchPlannedItems;
+      if (Array.isArray(data.watchLists)) watchLists = data.watchLists;
       saveDays(); saveWeightsToStorage(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); saveGamePoints();
-      savePlanBlocks(); savePeriodPlans();
+      savePlanBlocks(); savePeriodPlans(); saveWatchArchiveItems(); saveWatchPlannedItems(); saveWatchLists();
       syncCarryoversForToday();
       syncWatchForToday();
       reconcileGamePoints();
@@ -3002,11 +3667,20 @@ applyTheme(); // 화면이 그려지기 전에 가장 먼저 테마를 적용해
 reconcileGamePoints();
 syncCarryoversForToday();
 syncWatchForToday();
+// lastKnownTodayKey(영구 저장된 값)와 비교해서, 마지막 세션 이후 실제로 자정을 넘긴
+// 경우에만 종료/예정 아카이브의 연결을 끊는다 — 같은 날 새로고침만 했다면 그대로 유지.
+if (TODAY_KEY() !== lastKnownTodayKey) {
+  lastKnownTodayKey = TODAY_KEY();
+  saveLastKnownTodayKey();
+  detachWatchArchiveLinks();
+}
 renderDayHeader();
 renderBlocks();
 renderScore();
 renderGamePoints();
+updateReorderButtonVisibility();
 initPlanSubtabSwipe();
+initWatchSubtabSwipe();
 
 // 진행 중인 타이머가 있으면 (예: 앱을 닫았다 다시 열었을 때) 화면 갱신을 위해
 // 항상 tick 인터벌을 켜둔다. 타이머 시트가 열려있지 않으면 timerTick 내부에서

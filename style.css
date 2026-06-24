@@ -328,6 +328,8 @@ html, body {
 .type-chip { display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,0.08); margin-right: 6px; letter-spacing: .2px; }
 .time-chip { font-size: 11px; color: var(--gray-600); font-weight: 500; }
 .block-desc { font-size: 13px; color: var(--gray-600); margin-top: 6px; line-height: 1.4; }
+.auto-link { color: inherit; text-decoration: underline; text-decoration-color: var(--gray-400); word-break: break-all; }
+.auto-link:active { opacity: 0.6; }
 
 .heatmap { display: flex; gap: 3px; margin-top: 6px; }
 .hm-cell { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }

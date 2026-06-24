@@ -79,7 +79,14 @@
 
   <!-- ============ WATCH (감상) PAGE ============ -->
   <div class="page hidden" id="page-watch">
-    <div class="day-bar">
+    <div class="subtabs">
+      <button class="subtab-btn active" id="watchSubtab-ongoing" onclick="switchWatchSubtab('ongoing')">감상</button>
+      <button class="subtab-btn" id="watchSubtab-planned" onclick="switchWatchSubtab('planned')">예정</button>
+      <button class="subtab-btn" id="watchSubtab-archive" onclick="switchWatchSubtab('archive')">종료</button>
+      <button class="subtab-btn" id="watchSubtab-list" onclick="switchWatchSubtab('list')">목록</button>
+    </div>
+
+    <div class="day-bar" id="watchDayBar">
       <button class="day-nav" id="watchDayPrevBtn" onclick="changeWatchDay(-1)" aria-label="이전 날">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
@@ -94,9 +101,13 @@
     </div>
 
     <div class="page-bar">
-      <span class="page-bar-title">감상</span>
+      <span class="page-bar-title" id="watchPageBarTitle">감상</span>
       <div class="page-bar-actions">
-        <button class="btn-add" onclick="openWatchAdd()" aria-label="감상 추가">
+        <button class="btn-add" id="watchAddBtn" onclick="openWatchAdd()" aria-label="감상 추가">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          추가
+        </button>
+        <button class="btn-add hidden" id="watchListAddBtn" onclick="openWatchListAdd()" aria-label="목록 추가">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           추가
         </button>
@@ -530,6 +541,48 @@
     </div>
   </div>
 </div>
+
+<!-- ============ WATCH LIST FORM SHEET ============ -->
+<div class="overlay" id="watchListFormOverlay" onclick="overlayClose(event,'watchListFormOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2 id="watchListSheetTitle">목록 추가</h2>
+
+    <div class="field">
+      <label>제목</label>
+      <input type="text" id="wlName" placeholder="예: 올해 읽을 책" maxlength="80" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>설명 (선택)</label>
+      <input type="text" id="wlDesc" placeholder="이 목록에 대한 메모" maxlength="200" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>참조한 감상 블록</label>
+      <div id="wlRefList" class="ref-list"></div>
+      <button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="openWatchRefPicker()">+ 감상 블록 참조 추가</button>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('watchListFormOverlay')">취소</button>
+      <button class="btn-save" onclick="submitWatchListForm()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ WATCH REFERENCE PICKER SHEET ============ -->
+<div class="overlay" id="watchRefPickerOverlay" onclick="overlayClose(event,'watchRefPickerOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2>감상 블록 참조 선택</h2>
+    <div id="watchRefPickerList" class="ref-picker-list"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('watchRefPickerOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- ============ IMPORT TO TODO POPUP ============ -->
 <div class="overlay" id="importPopupOverlay" onclick="overlayClose(event,'importPopupOverlay')">
