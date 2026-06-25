@@ -101,6 +101,7 @@ let pendingWatchListRefs = []; // 감상 목록 폼 작성 중 임시로 들고 
 let editPeriodId = null;
 let selectedPeriodMode = null;
 let pendingPeriodRefs = []; // 기간계획 폼 작성 중 임시로 들고 있는 참조 목록
+let creatingPlanForPeriod = false; // 기간계획 폼 안에서 "새 계획 만들고 참조하기"로 계획 폼을 띄운 상태인지
 let importPlanId = null;
 // 드래그 재정렬 진행 중 상태 (한 번에 하나의 드래그만 가능)
 let dragReorderState = null;
@@ -1672,6 +1673,22 @@ function togglePlanCounterFields() {
   document.getElementById('pfCounterFields').classList.toggle('hidden', selectedPlanProgress !== 'counter');
 }
 
+function openPlanAddForPeriod() {
+  creatingPlanForPeriod = true;
+  closeOverlay('periodFormOverlay'); // 입력 내용은 DOM에 그대로 남아있고, 화면에서만 잠시 가린다
+  openPlanAdd();
+}
+
+// 계획 폼을 취소(닫기)할 때 — "기간계획에서 새 계획 만들기"로 들어온 경우라면
+// 그냥 닫지 않고 잠시 가려뒀던 기간계획 폼으로 되돌아간다 (작성 중이던 내용은 그대로 보존됨).
+function cancelPlanForm() {
+  closeOverlay('planFormOverlay');
+  if (creatingPlanForPeriod) {
+    creatingPlanForPeriod = false;
+    document.getElementById('periodFormOverlay').classList.add('open');
+  }
+}
+
 function openPlanAdd() {
   editPlanId = null;
   document.getElementById('planSheetTitle').textContent = '계획 추가';
@@ -1756,6 +1773,7 @@ function submitPlanForm() {
       if (selectedPlanProgress === 'counter') { p.total = total; p.current = current; }
       else if (selectedPlanProgress === 'toggle') { if (p.done === undefined) p.done = false; }
     }
+    savePlanBlocks(); renderPlanList(); closeOverlay('planFormOverlay');
   } else {
     const plan = {
       id: Date.now() + Math.floor(Math.random()*1000),
@@ -1766,9 +1784,17 @@ function submitPlanForm() {
     if (selectedPlanProgress === 'counter') { plan.total = total; plan.current = current; }
     if (selectedPlanProgress === 'toggle') { plan.done = false; }
     planBlocks.push(plan);
-  }
+    savePlanBlocks(); renderPlanList(); closeOverlay('planFormOverlay');
 
-  savePlanBlocks(); renderPlanList(); closeOverlay('planFormOverlay');
+    if (creatingPlanForPeriod) {
+      // 기간계획 폼 안에서 "새 계획 만들고 참조하기"로 들어온 경우 — 방금 만든 계획을 자동으로
+      // 참조 목록에 추가하고, 잠시 가려뒀던 기간계획 폼을 그대로(입력했던 내용 유지) 다시 연다.
+      creatingPlanForPeriod = false;
+      pendingPeriodRefs.push({ kind: 'plan', id: plan.id, dateKey: null, watchSource: null, refDate: '', refDateEnd: '' });
+      renderPendingRefList();
+      document.getElementById('periodFormOverlay').classList.add('open');
+    }
+  }
 }
 
 function askDeletePlan(id) {
@@ -2034,6 +2060,7 @@ function monthToDateRange(monthStr) {
 
 function openPeriodPlanAdd() {
   editPeriodId = null;
+  creatingPlanForPeriod = false;
   document.getElementById('periodSheetTitle').textContent = '기간계획 추가';
   document.getElementById('ppDesc').value = '';
   document.getElementById('ppMonthInput').value = '';
@@ -2054,6 +2081,7 @@ function openPeriodPlanEdit(id) {
   const pp = periodPlans.find(x => x.id === id);
   if (!pp) return;
   editPeriodId = id;
+  creatingPlanForPeriod = false;
   document.getElementById('periodSheetTitle').textContent = '기간계획 수정';
   document.getElementById('ppDesc').value = pp.desc || '';
   selectedPeriodMode = pp.mode;
@@ -2147,6 +2175,15 @@ function resolveRef(ref) {
     const dayObj = days[ref.dateKey];
     const b = dayObj && dayObj.blocks.find(x => x.id === ref.id);
     return b ? { name: b.name, meta: `${TYPE_LABEL[b.type]} · ${ref.dateKey}` } : null;
+  } else if (ref.kind === 'watch') {
+    // 감상 참조는 '오늘 진행 중' 또는 '예정' 둘 중 한 곳에 있을 수 있다 (참조 추가 시점 기준).
+    if (ref.watchSource === 'planned') {
+      const item = watchPlannedItems.find(x => x.id === ref.id);
+      return item ? { name: item.name, meta: `감상(예정) · ${WATCH_TYPE_LABEL[item.type]}` } : null;
+    }
+    const dayObj = days[ref.dateKey];
+    const w = dayObj && (dayObj.watchBlocks || []).find(x => x.id === ref.id);
+    return w ? { name: w.name, meta: `감상 · ${WATCH_TYPE_LABEL[w.type]} · ${ref.dateKey}` } : null;
   }
   return null;
 }
@@ -2156,28 +2193,48 @@ function renderRefPickerList() {
   const items = [];
 
   planBlocks.forEach(p => {
-    items.push({ kind: 'plan', id: p.id, dateKey: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type]}` });
+    items.push({ kind: 'plan', id: p.id, dateKey: null, watchSource: null, name: p.name, meta: `계획 · ${TYPE_LABEL[p.type]}` });
   });
-  // 기간계획 참조는 계획 탭 블록만 허용
+
+  // 할일 블록 — 오늘 이후(오늘 포함) 날짜에 있는 미완료 블록만. days에 실제로 데이터가 있는 날짜만 훑는다.
+  const today = TODAY_KEY();
+  Object.keys(days).filter(k => k >= today).sort().forEach(dateKey => {
+    const dayObj = days[dateKey];
+    (dayObj.blocks || []).forEach(b => {
+      if (b.progressType === 'none') return; // 진행 체크가 없는 블록은 "완료" 개념이 없어 제외
+      if (isBlockComplete(b)) return;
+      items.push({ kind: 'todo', id: b.id, dateKey, watchSource: null, name: b.name, meta: `${TYPE_LABEL[b.type]} · ${dateKey}` });
+    });
+  });
+
+  // 감상 블록 — 오늘 진행 중(보관 아님)인 것 + 예정 아카이브. 종료(완료/보관)는 제외.
+  const todayWatch = days[today];
+  (todayWatch ? todayWatch.watchBlocks || [] : []).forEach(w => {
+    if (w.archived) return;
+    items.push({ kind: 'watch', id: w.id, dateKey: today, watchSource: 'ongoing', name: w.name, meta: `감상 · ${WATCH_TYPE_LABEL[w.type]} · ${w.progress}%` });
+  });
+  watchPlannedItems.forEach(item => {
+    items.push({ kind: 'watch', id: item.id, dateKey: null, watchSource: 'planned', name: item.name, meta: `감상(예정) · ${WATCH_TYPE_LABEL[item.type]}` });
+  });
 
   if (!items.length) {
-    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 계획 블록이 없어요</p></div>`;
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 블록이 없어요</p></div>`;
     return;
   }
 
   el.innerHTML = items.map(item => {
-    const isSelected = pendingPeriodRefs.some(r => r.kind === item.kind && r.id === item.id && r.dateKey === item.dateKey);
-    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},null)">
+    const isSelected = pendingPeriodRefs.some(r => r.kind === item.kind && r.id === item.id && r.dateKey === item.dateKey && r.watchSource === item.watchSource);
+    return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},${item.dateKey?`'${item.dateKey}'`:'null'},${item.watchSource?`'${item.watchSource}'`:'null'})">
       <span>${esc(item.name)}</span>
       <span class="ref-picker-item-meta">${esc(item.meta)}</span>
     </div>`;
   }).join('');
 }
 
-function toggleRefSelection(kind, id, dateKey) {
-  const idx = pendingPeriodRefs.findIndex(r => r.kind === kind && r.id === id && r.dateKey === dateKey);
+function toggleRefSelection(kind, id, dateKey, watchSource) {
+  const idx = pendingPeriodRefs.findIndex(r => r.kind === kind && r.id === id && r.dateKey === dateKey && r.watchSource === watchSource);
   if (idx >= 0) pendingPeriodRefs.splice(idx, 1);
-  else pendingPeriodRefs.push({ kind, id, dateKey, refDate: '', refDateEnd: '' });
+  else pendingPeriodRefs.push({ kind, id, dateKey, watchSource, refDate: '', refDateEnd: '' });
   renderRefPickerList();
   renderPendingRefList();
 }
@@ -2669,11 +2726,18 @@ function askDeleteWatch(id) {
   document.getElementById('confirmOverlay').classList.add('open');
 }
 
-function moveWatchBlock(idx, dir) {
+function moveWatchBlock(id, dir) {
   const day = ensureDay(viewingWatchDateKey);
-  const target = idx + dir;
-  if (target < 0 || target >= day.watchBlocks.length) return;
-  [day.watchBlocks[idx], day.watchBlocks[target]] = [day.watchBlocks[target], day.watchBlocks[idx]];
+  // 보이는(예정/보관이 아닌) 항목들만의 순서 기준으로 옮긴 뒤 전체 배열을 다시 구성한다.
+  // 그래야 화면상 바로 위/아래 카드와 정확히 자리가 바뀐다 (그 사이에 숨겨진 항목이 끼어 있어도 영향 없음).
+  const visible = day.watchBlocks.filter(w => !w.planned && !w.archived);
+  const hidden = day.watchBlocks.filter(w => w.planned || w.archived);
+  const visibleIdx = visible.findIndex(w => w.id === id);
+  if (visibleIdx === -1) return;
+  const target = visibleIdx + dir;
+  if (target < 0 || target >= visible.length) return;
+  [visible[visibleIdx], visible[target]] = [visible[target], visible[visibleIdx]];
+  day.watchBlocks = visible.concat(hidden);
   saveDays(); renderWatchBlocks();
 }
 
@@ -2818,7 +2882,13 @@ function renderWatchBlocks() {
 function renderWatchOngoing() {
   const day = ensureDay(viewingWatchDateKey);
   const el = document.getElementById('watchList');
-  if (!day.watchBlocks.length) {
+
+  // '예정' 또는 '보관' 체크된 블록은 감상 탭에서 완전히 숨긴다 (각각 예정/종료 탭에서 확인 가능).
+  // 데이터 자체는 day.watchBlocks에 그대로 남아있고, 체크를 해제하면 다시 보인다.
+  const withIdx = day.watchBlocks.map((w, realIdx) => ({ w, realIdx }));
+  const visible = withIdx.filter(x => !x.w.planned && !x.w.archived);
+
+  if (!visible.length) {
     el.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="13" x2="16" y2="13"/></svg>
       <p>오늘 접한 콘텐츠를 추가해보세요</p>
@@ -2826,23 +2896,20 @@ function renderWatchOngoing() {
     return;
   }
 
-  const withIdx = day.watchBlocks.map((w, realIdx) => ({ w, realIdx }));
-  const sorted = withIdx.slice().sort((x, y) => {
-    // 정렬 그룹: 0 = 진행 중(일반), 1 = 완료(100%), 2 = 예정 또는 보관(희미하게 맨 아래)
-    const groupOf = (w) => (w.planned || w.archived) ? 2 : (w.progress >= 100 ? 1 : 0);
+  const sorted = visible.slice().sort((x, y) => {
+    // 정렬 그룹: 0 = 진행 중(일반), 1 = 완료(100%, 그날 동안 종료 탭과 함께 떠 있음)
+    const groupOf = (w) => (w.progress >= 100 ? 1 : 0);
     const xGroup = groupOf(x.w), yGroup = groupOf(y.w);
     if (xGroup !== yGroup) return xGroup - yGroup;
     return x.realIdx - y.realIdx;
   });
 
-  el.innerHTML = sorted.map(({ w, realIdx }) => {
-    const idx = realIdx;
+  el.innerHTML = sorted.map(({ w, realIdx }, displayIdx) => {
     const complete = w.progress >= 100;
-    const faded = !!(w.planned || w.archived);
     const delta = watchDeltaForToday(w, viewingWatchDateKey);
     const deltaStr = (delta !== null && delta !== 0) ? `${delta > 0 ? '+' : ''}${delta}%p` : null;
     const memoCount = (w.memos || []).length;
-    return `<div class="card watch-card type-watch-${w.type} ${complete ? 'completed' : ''} ${faded ? 'faded' : ''}" data-id="${w.id}">
+    return `<div class="card watch-card type-watch-${w.type} ${complete ? 'completed' : ''}" data-id="${w.id}">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -2850,7 +2917,7 @@ function renderWatchOngoing() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(w.name)}</div>
-            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[w.type]}</span>${w.author ? `<span class="time-chip">${esc(w.author)}</span>` : ''}${w.planned ? '<span class="carryover-chip">예정</span>' : ''}${w.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[w.type]}</span>${w.author ? `<span class="time-chip">${esc(w.author)}</span>` : ''}</div>
           </div>
           <div class="card-btns">
             <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchMemo(${w.id})" aria-label="감상 메모">
@@ -2864,8 +2931,8 @@ function renderWatchOngoing() {
             </button>
           </div>
           <div class="move-btns">
-            <button class="move-btn" onclick="moveWatchBlock(${idx},-1)" ${idx===0?'disabled':''} aria-label="위로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
-            <button class="move-btn" onclick="moveWatchBlock(${idx},1)" ${idx===day.watchBlocks.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+            <button class="move-btn" onclick="moveWatchBlock(${w.id},-1)" ${displayIdx===0?'disabled':''} aria-label="위로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button class="move-btn" onclick="moveWatchBlock(${w.id},1)" ${displayIdx===sorted.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           </div>
         </div>
         <div class="block-progress-row">
@@ -2890,10 +2957,17 @@ function renderWatchOngoing() {
   registerDragReorder('watchList',
     () => sorted.map(x => x.w),
     (fromIdx, toIdx) => {
-      const order = sorted.map(x => x.w);
-      const [moved] = order.splice(fromIdx, 1);
-      order.splice(toIdx, 0, moved);
-      day.watchBlocks = order;
+      // 보이는 항목들만 화면 순서대로 재배치하고, 숨겨진(예정/보관) 항목들은 원래 상대 위치를 그대로 유지한 채
+      // 새로 배치된 항목들 사이사이에 끼워 넣는다. 이렇게 하면 보이지 않는 데이터가 사라지거나
+      // 엉뚱한 자리로 튀지 않는다.
+      const visibleOrder = sorted.map(x => x.w);
+      const [moved] = visibleOrder.splice(fromIdx, 1);
+      visibleOrder.splice(toIdx, 0, moved);
+
+      const hidden = day.watchBlocks.filter(w => w.planned || w.archived);
+      // 숨겨진 항목들이 원래 차지했던 위치 비율을 대략적으로 보존하기보다,
+      // 단순하고 예측 가능하게: 보이는 항목들 재배열 후 맨 뒤에 숨겨진 항목들을 그대로 이어붙인다.
+      day.watchBlocks = visibleOrder.concat(hidden);
       saveDays(); renderWatchBlocks();
     }
   );

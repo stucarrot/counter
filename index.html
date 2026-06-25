@@ -416,7 +416,7 @@
 </div>
 
 <!-- ============ PLAN FORM SHEET ============ -->
-<div class="overlay" id="planFormOverlay" onclick="overlayClose(event,'planFormOverlay')">
+<div class="overlay" id="planFormOverlay" onclick="if(event.target===this) cancelPlanForm()">
   <div class="sheet sheet-tall">
     <div class="sheet-handle"></div>
     <h2 id="planSheetTitle">계획 추가</h2>
@@ -482,7 +482,7 @@
     </div>
 
     <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('planFormOverlay')">취소</button>
+      <button class="btn-cancel" onclick="cancelPlanForm()">취소</button>
       <button class="btn-save" onclick="submitPlanForm()">저장</button>
     </div>
   </div>
@@ -529,6 +529,7 @@
       <label>참조한 블록</label>
       <div id="ppRefList" class="ref-list"></div>
       <button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="openRefPicker()">+ 블록 참조 추가</button>
+      <button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="openPlanAddForPeriod()">+ 새 계획 만들고 참조하기</button>
     </div>
 
     <div class="sheet-actions">
