@@ -683,7 +683,31 @@ function toggleBlockDone(id) {
   const b = day.blocks.find(x => x.id === id);
   if (!b) return;
   b.done = !b.done;
+  // 완료로 체크하는 순간, 그 블록의 시간재기가 꺼지지 않은 채로 남아있었다면(진행 중이든 일시정지든)
+  // 자동으로 멈추고 그때까지 잰 시간을 기록한다.
+  if (b.done && activeTimer && activeTimer.blockId === id) {
+    const elapsedMs = stopActiveTimerForBlock(b, id);
+    if (elapsedMs >= 1000) showToast(`완료 처리되어 시간재기도 함께 멈췄어요 (${formatDurationShort(elapsedMs)})`);
+  }
   saveDays(); renderBlocks(); renderScore();
+}
+
+// 시트가 열려있지 않아도(카드에서 직접 완료 토글하는 경우) 안전하게 타이머를 멈추고 세션을 기록한다.
+// timerStop()은 타이머 시트가 열려있다는 전제(timerBlockId, 화면 갱신)로 동작해서 여기선 따로 둔다.
+// 반환값: 이번에 기록된 경과시간(ms) — 호출 측에서 안내 메시지 등에 재사용할 수 있게.
+function stopActiveTimerForBlock(block, blockId) {
+  const elapsedMs = currentElapsedMs();
+  if (elapsedMs >= 1000) {
+    const endTime = new Date();
+    const startTime = new Date(endTime.getTime() - elapsedMs);
+    if (!block.sessions) block.sessions = [];
+    block.sessions.push({ start: startTime.toISOString(), end: endTime.toISOString() });
+  }
+  activeTimer = null;
+  saveActiveTimer();
+  // 타이머 시트가 이 블록을 보고 있는 채로 열려 있었다면 그 화면도 같이 갱신
+  if (timerBlockId === blockId) renderTimerSheet();
+  return elapsedMs;
 }
 
 function moveBlock(idx, dir) {
