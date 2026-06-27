@@ -146,15 +146,15 @@ html, body {
 /* ===== Bottombar (탭 + 순서변경/더보기 통합) ===== */
 .bottombar {
   display: flex; align-items: stretch; justify-content: space-between;
-  padding: 6px 8px calc(6px + var(--safe-bottom));
+  padding: 9px 8px calc(9px + var(--safe-bottom));
   border-top: 1px solid var(--gray-200);
   background: var(--white); flex-shrink: 0; gap: 4px;
   order: 99; /* #app 안에서 항상 맨 마지막(화면 맨 아래)에 위치 */
 }
 .bottom-tabs { display: flex; gap: 1px; flex: 1; min-width: 0; }
 .tab-btn {
-  flex: 1; min-width: 0; background: none; border: none; font-size: 11.5px; font-weight: 500;
-  color: var(--gray-400); padding: 7px 2px 5px; cursor: pointer;
+  flex: 1; min-width: 0; background: none; border: none; font-size: 12.5px; font-weight: 500;
+  color: var(--gray-400); padding: 10px 2px 8px; cursor: pointer;
   border-radius: 8px; white-space: nowrap;
 }
 .tab-btn.active { color: var(--black); background: var(--gray-100); font-weight: 700; }
@@ -168,7 +168,7 @@ html, body {
 .ghost-btn.reorder-toggle-hidden { visibility: hidden; pointer-events: none; }
 .ghost-btn svg { width: 14px; height: 14px; }
 .ghost-btn[aria-pressed="true"] { background: var(--black); color: var(--white); border-color: var(--black); }
-.ghost-btn.icon-only { padding: 7px; }
+.ghost-btn.icon-only { padding: 9px; }
 .ghost-btn.icon-only span { display: none; }
 
 /* ===== Page bar (section header inside a tab) ===== */
@@ -312,15 +312,6 @@ html, body {
 .watch-progress-btn:active { background: var(--gray-100); }
 .watch-delta-chip { font-size: 11px; font-weight: 600; color: var(--gray-600); flex-shrink: 0; }
 
-.game-points-card {
-  margin: 24px 16px 16px; border: 1px solid var(--black); border-radius: 14px;
-  padding: 24px 20px; text-align: center;
-}
-.game-points-label { font-size: 13px; color: var(--gray-600); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
-.game-points-num { font-size: 48px; font-weight: 800; letter-spacing: -1px; }
-.game-points-hint { font-size: 12px; color: var(--gray-400); margin-top: 10px; }
-.game-recalc-btn { margin-top: 18px; }
-
 .watch-memo-list { max-height: 260px; }
 .watch-memo-input-bar { border-top: 1px solid var(--gray-200); padding: 10px 0; margin-top: 10px; }
 .sheet-watch-memo { padding-left: 10px; padding-right: 10px; }
@@ -404,6 +395,28 @@ html, body {
 
 /* ===== Memo page ===== */
 .memo-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; padding-bottom: calc(12px + var(--safe-bottom)); }
+
+/* ===== Pinned memos (날짜 무관, 채팅 공지 형식) ===== */
+.pinned-memo-list { display: flex; flex-direction: column; gap: 1px; padding: 0 16px; flex-shrink: 0; }
+.pinned-memo-list.hidden { display: none; }
+.pinned-memo-row {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--gray-100); border-radius: 8px; padding: 7px 9px;
+  margin-bottom: 4px;
+}
+.pinned-memo-icon { width: 13px; height: 13px; flex-shrink: 0; color: var(--gray-600); }
+.pinned-memo-text {
+  font-size: 13px; line-height: 1.4; color: var(--black); flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pinned-memo-unpin {
+  width: 18px; height: 18px; flex-shrink: 0; border: none; background: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: var(--gray-400); padding: 0;
+}
+.pinned-memo-unpin svg { width: 13px; height: 13px; }
+
+.memo-pin-btn { font-size: 10.5px; color: var(--gray-600); background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
+.memo-pin-btn.pinned { color: var(--black); font-weight: 700; }
 .memo-bubble { background: var(--gray-100); border-radius: 16px; padding: 10px 14px; max-width: 88%; align-self: flex-start; }
 .memo-text { font-size: 14.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .memo-meta-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
@@ -422,15 +435,6 @@ html, body {
 .memo-send-btn { width: 38px; height: 38px; border-radius: 50%; background: var(--black); color: var(--white); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .memo-send-btn:active { opacity: .8; }
 .memo-send-btn svg { width: 17px; height: 17px; }
-
-/* ===== Score feedback button ===== */
-.score-feedback-btn { font-size: 10px; font-weight: 600; color: var(--black); background: none; border: 1px solid var(--gray-300); border-radius: 6px; padding: 3px 7px; cursor: pointer; }
-.score-feedback-btn:active { background: var(--gray-100); }
-.score-bottom-row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
-.score-focus-row { font-size: 10.5px; color: var(--gray-600); font-weight: 500; }
-.score-focus-row strong { color: var(--black); }
-.feedback-body { font-size: 14px; line-height: 1.6; color: var(--black); white-space: pre-wrap; }
-.feedback-body .fb-loading { color: var(--gray-400); }
 
 /* drag/reorder */
 .reorder-handle { display: none; width: 30px; height: 30px; border: none; background: none; cursor: grab; align-items: center; justify-content: center; color: var(--gray-600); flex-shrink: 0; touch-action: none; }
@@ -460,15 +464,6 @@ body.reordering .move-btns { display: flex; }
 .day-date { font-size: 11px; color: var(--gray-600); margin-top: 1px; }
 .today-jump { font-size: 12px; border: 1px solid var(--gray-300); border-radius: 7px; padding: 6px 9px; background: none; cursor: pointer; flex-shrink: 0; }
 .today-jump.hidden { visibility: hidden; }
-
-/* ===== Score card ===== */
-.score-card { margin: 6px 16px 0; border: 1px solid var(--black); border-radius: 9px; padding: 8px 11px; }
-.score-top { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
-.score-num { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
-.score-num span { font-size: 10px; font-weight: 500; color: var(--gray-600); }
-.score-feedback { font-size: 10.5px; color: var(--gray-600); line-height: 1.25; }
-.score-bar { height: 3px; background: var(--gray-200); border-radius: 2px; overflow: hidden; margin-top: 5px; }
-.score-bar-fill { height: 100%; background: var(--black); border-radius: 2px; transition: width .3s ease; }
 
 /* ===== Overlay / sheet ===== */
 .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100; align-items: flex-end; justify-content: center; }
@@ -545,10 +540,6 @@ body.reordering .move-btns { display: flex; }
 .menu-item:active { background: var(--gray-100); }
 .menu-item svg { width: 17px; height: 17px; flex-shrink: 0; }
 
-.weight-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; }
-.weight-row span { font-size: 13.5px; font-weight: 500; }
-.weight-row input { width: 70px; border: 1px solid var(--black); border-radius: 7px; padding: 7px 9px; font-size: 14px; text-align: center; }
-
 #install-banner { display: none; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--black); color: var(--white); font-size: 12.5px; flex-shrink: 0; gap: 10px; }
 #install-banner.show { display: flex; }
 #install-banner button { background: var(--white); color: var(--black); border: none; border-radius: 6px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
@@ -582,20 +573,6 @@ body.reordering .move-btns { display: flex; }
 .split-date-row { display: flex; align-items: center; gap: 6px; }
 .split-date-input { flex: 2; border: 1px solid var(--black); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
 .split-count-input { flex: 1; border: 1px solid var(--black); border-radius: 8px; padding: 8px 8px; font-size: 14px; text-align: center; width: 60px; }
-
-/* ===== Game spend UI ===== */
-.game-btns-row { display: flex; gap: 8px; margin-top: 16px; justify-content: center; }
-.game-spend-btn { font-size: 13px; }
-.game-ledger-wrap { padding: 0 16px 20px; }
-.game-ledger-title { font-size: 11.5px; font-weight: 700; color: var(--gray-600); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
-.game-ledger { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--gray-200); border-radius: 12px; overflow: hidden; }
-.ledger-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--gray-200); gap: 10px; }
-.ledger-row:last-child { border-bottom: none; }
-.ledger-row-left { flex: 1; min-width: 0; }
-.ledger-reason { font-size: 13.5px; font-weight: 500; }
-.ledger-date { font-size: 10.5px; color: var(--gray-400); margin-top: 2px; }
-.ledger-amount { font-size: 16px; font-weight: 700; color: #c0392b; flex-shrink: 0; }
-.game-ledger-empty { padding: 20px; text-align: center; font-size: 13px; color: var(--gray-400); }
 
 /* ===== Ref item with date column layout ===== */
 .ref-item-col { flex-direction: column; align-items: stretch; gap: 6px; }

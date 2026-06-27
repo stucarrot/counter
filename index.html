@@ -63,8 +63,6 @@
       <button class="today-jump" id="todayJumpBtn" onclick="jumpToday()">오늘로</button>
     </div>
 
-    <div class="score-card" id="scoreCard"></div>
-
     <div class="page-bar">
       <span class="page-bar-title">블록</span>
       <div class="page-bar-actions">
@@ -131,6 +129,7 @@
       </button>
       <button class="today-jump" id="memoTodayJumpBtn" onclick="jumpMemoToday()">오늘로</button>
     </div>
+    <div id="pinnedMemoList" class="pinned-memo-list"></div>
     <div id="memoList" class="memo-list"></div>
     <div class="memo-input-bar">
       <textarea id="memoInput" class="memo-input" placeholder="메모 입력..." rows="1" oninput="autoGrowMemoInput(this)"></textarea>
@@ -141,24 +140,6 @@
   </div>
 
   <!-- ============ GAME PAGE ============ -->
-  <div class="page hidden" id="page-game" style="overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(20px + var(--safe-bottom))">
-    <div class="game-points-card">
-      <div class="game-points-label">누적 포인트</div>
-      <div class="game-points-num" id="gamePointsNum">0</div>
-      <div class="game-points-hint">매일의 종합 점수가 합산돼요</div>
-      <div class="game-btns-row">
-        <button class="btn-add game-spend-btn" onclick="openSpendOverlay()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-          소모하기
-        </button>
-      </div>
-    </div>
-    <div class="game-ledger-wrap">
-      <div class="game-ledger-title">소모 내역</div>
-      <div id="gameLedger" class="game-ledger"></div>
-    </div>
-  </div>
-
   <div id="install-banner">
     <span>홈 화면에 추가하면 앱처럼 사용할 수 있어요</span>
     <button onclick="installApp()">설치</button>
@@ -170,7 +151,6 @@
       <button class="tab-btn active" id="tabBtn-todo" onclick="switchTab('todo')">할일</button>
       <button class="tab-btn" id="tabBtn-watch" onclick="switchTab('watch')">감상</button>
       <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모</button>
-      <button class="tab-btn" id="tabBtn-game" onclick="switchTab('game')">게임</button>
     </div>
     <div class="bottombar-actions">
       <button class="ghost-btn icon-only" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false" aria-label="순서 변경">
@@ -344,6 +324,11 @@
     <div class="field">
       <label>저자 (선택)</label>
       <input type="text" id="wfAuthor" placeholder="예: 드니 빌뇌브" maxlength="40" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>설명 (선택)</label>
+      <input type="text" id="wfDesc" placeholder="간단한 메모" maxlength="200" autocomplete="off">
     </div>
 
     <div class="field">
@@ -641,26 +626,6 @@
 </div>
 
 
-<!-- ============ GAME SPEND SHEET ============ -->
-<div class="overlay" id="spendOverlay" onclick="overlayClose(event,'spendOverlay')">
-  <div class="sheet">
-    <div class="sheet-handle"></div>
-    <h2>포인트 소모</h2>
-    <div class="field">
-      <label>소모 포인트</label>
-      <input type="number" id="spendAmount" placeholder="예: 500" min="1" inputmode="numeric">
-    </div>
-    <div class="field">
-      <label>소모 이유</label>
-      <input type="text" id="spendReason" placeholder="예: 영화 관람" maxlength="80" autocomplete="off">
-    </div>
-    <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('spendOverlay')">취소</button>
-      <button class="btn-save" onclick="submitSpend()">소모</button>
-    </div>
-  </div>
-</div>
-
 <!-- ============ MENU SHEET (backup / settings) ============ -->
 <div class="overlay" id="menuOverlay" onclick="overlayClose(event,'menuOverlay')">
   <div class="sheet">
@@ -681,37 +646,13 @@
       백업 불러오기 (가져오기)
     </button>
     <input type="file" id="importFile" accept="application/json" class="hidden" onchange="importBackup(event)">
-    <h2 style="margin-top:20px;">점수 설정 (절댓값)</h2>
-    <p style="font-size:12.5px;color:var(--gray-400);margin:-4px 0 10px;">유형별로 완료 시 받는 점수예요. 카운터형은 진행 비율만큼 부분 점수가 쌓여요.</p>
-    <div class="weight-row"><span>일정</span><input type="number" id="wSchedule" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>할일</span><input type="number" id="wTodo" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>일회성</span><input type="number" id="wOnce" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>여가</span><input type="number" id="wLeisure" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>루틴</span><input type="number" id="wRoutine" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>집중시간</span><input type="number" id="wFocus" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>감상</span><input type="number" id="wWatch" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>미지정</span><input type="number" id="wUnspecified" min="0" max="999" step="0.5"></div>
-    <div class="weight-row"><span>절제 (감점)</span><input type="number" id="wAbstain" min="0" max="999" step="0.5"></div>
-    <div class="sheet-actions">
+    <div class="sheet-actions" style="margin-top:20px;">
       <button class="btn-cancel" onclick="closeOverlay('menuOverlay')">닫기</button>
-      <button class="btn-save" onclick="saveMenuSettings()">저장</button>
     </div>
   </div>
 </div>
 
 <div id="toast"></div>
-
-<!-- ============ YESTERDAY FEEDBACK SHEET ============ -->
-<div class="overlay" id="feedbackOverlay" onclick="overlayClose(event,'feedbackOverlay')">
-  <div class="sheet">
-    <div class="sheet-handle"></div>
-    <h2>어제 피드백</h2>
-    <div id="feedbackBody" class="feedback-body">불러오는 중...</div>
-    <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('feedbackOverlay')">닫기</button>
-    </div>
-  </div>
-</div>
 
 <script src="app.js"></script>
 </body>

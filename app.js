@@ -5,12 +5,6 @@
        total?, current?, done?, carryover, carryoverId?, sessions? }
      watchBlock (감상): { id, name, author, type(book/movie/etc), progress(0~100),
        archived: bool, watchChainId: string, memos: [{id,text,time}] }
-   pc_weights     : { schedule, todo, once, leisure, routine, focus, watch, unspecified, focusGoalMinutes }
-     (이름은 "weights"지만 실제로는 블록 타입별 "절댓값 점수"다. 가중평균이 아니라
-      블록별 점수를 그냥 다 더하는 방식 — 하루 총점은 100점 캡이 없는 무제한 누적.
-      완료된 블록은 절댓값 전체, 카운터형은 (진행 비율 × 절댓값)의 부분 점수를 준다.
-      집중시간/감상도 동일하게 절댓값 적용: 집중시간은 목표 달성 비율 × 절댓값,
-      감상은 그날 진행도 변화분 비율 × 절댓값.)
    pc_carryover_meta  : { <carryoverId>: { stopped: bool } }   // 할일 이행/루틴 체인
    pc_watch_chain_meta: { <watchChainId>: { stopped: bool } }  // 감상 이월 체인
    pc_memos       : { "2026-06-17": [{id, text, time}], ... }  // 메모 탭
@@ -23,12 +17,6 @@
        refs: [{ kind: 'plan'|'todo', id, dateKey? }], order }
      (todo 참조는 특정 날짜의 할일 블록이라 dateKey가 필요하고, plan 참조는 전역
       목록이라 dateKey가 필요 없다.)
-   pc_game_points : number  // 게임 탭 누적 포인트 (매일 종합점수 단순 합산)
-   pc_game_added_scores: { "2026-06-16": 59, ... }  // 날짜별로 포인트에 "이미 합산한 점수"
-     기록. 과거 날짜의 할일/감상 데이터를 수정해서 그날 점수가 바뀌면, 여기 기록된
-     값과 새로 계산한 값의 차이만큼 gamePoints를 보정하고 이 기록도 갱신한다.
-     (오늘 날짜는 아직 "마감"되지 않았으므로 여기 기록되지 않고, 오전 4시 컷오프를
-     지나야 비로소 합산 대상이 된다.)
 
    유형 "루틴"은 carryover가 항상 true로 강제된다 (기본은 매일 자동 반복, 진행도 리셋).
    루틴은 intervalDays(기본 1)로 "매 n일마다" 반복 주기를 가질 수 있다 — 체인이
@@ -52,17 +40,16 @@ const DAY_CUTOFF_HOUR = 4;
 const HEATMAP_DAYS = 5;
 
 let days = JSON.parse(localStorage.getItem('pc_days') || '{}');
-let weights = JSON.parse(localStorage.getItem('pc_weights') || 'null') || { schedule: 10, todo: 8, once: 6, leisure: 5, routine: 8, focus: 6, watch: 3 };
 let carryoverMeta = JSON.parse(localStorage.getItem('pc_carryover_meta') || '{}');
 let watchChainMeta = JSON.parse(localStorage.getItem('pc_watch_chain_meta') || '{}');
 let memos = JSON.parse(localStorage.getItem('pc_memos') || '{}');
+// 고정 메모 — 날짜와 무관하게 메모 탭 상단에 공지처럼 항상 떠 있는 메모. 최대 3개.
+// 각 항목은 원본 메모를 정확히 찾기 위해 { memoId, dateKey }로 저장한다.
+let pinnedMemos = JSON.parse(localStorage.getItem('pc_pinned_memos') || '[]');
 let activeTimer = JSON.parse(localStorage.getItem('pc_active_timer') || 'null');
 // 절제(abstain) 블록 전용 시간재기 — 보조 집중타이머(activeTimer)와는 완전히 별개라
 // 동시에 둘 다 돌릴 수 있다. 일시정지 없이 단순 시작/정지만 지원 (카드에서 원클릭 조작).
 let activeAbstainTimers = JSON.parse(localStorage.getItem('pc_active_abstain_timers') || '{}'); // { [blockId]: { dateKey, startedAt } }
-let gamePoints = parseFloat(localStorage.getItem('pc_game_points') || '0');
-let gameAddedScores = JSON.parse(localStorage.getItem('pc_game_added_scores') || '{}');
-let gameSpendLog = JSON.parse(localStorage.getItem('pc_game_spend_log') || '[]');
 let planBlocks = JSON.parse(localStorage.getItem('pc_plan_blocks') || '[]');
 let periodPlans = JSON.parse(localStorage.getItem('pc_period_plans') || '[]');
 let themePref = localStorage.getItem('pc_theme_pref') || 'system'; // 'system' | 'light' | 'dark'
@@ -123,13 +110,11 @@ const WATCH_TYPE_LABEL = { book: '독서', movie: '영화', etc: '기타' };
 /* ---------- persistence helpers ---------- */
 function saveDays() {
   localStorage.setItem('pc_days', JSON.stringify(days));
-  reconcileGamePoints();
-  if (currentTab === 'game') renderGamePoints();
 }
-function saveWeightsToStorage() { localStorage.setItem('pc_weights', JSON.stringify(weights)); }
 function saveCarryoverMeta() { localStorage.setItem('pc_carryover_meta', JSON.stringify(carryoverMeta)); }
 function saveWatchChainMeta() { localStorage.setItem('pc_watch_chain_meta', JSON.stringify(watchChainMeta)); }
 function saveMemos() { localStorage.setItem('pc_memos', JSON.stringify(memos)); }
+function savePinnedMemos() { localStorage.setItem('pc_pinned_memos', JSON.stringify(pinnedMemos)); }
 function savePlanBlocks() { localStorage.setItem('pc_plan_blocks', JSON.stringify(planBlocks)); }
 function savePeriodPlans() { localStorage.setItem('pc_period_plans', JSON.stringify(periodPlans)); }
 function saveWatchArchiveItems() { localStorage.setItem('pc_watch_archive_items', JSON.stringify(watchArchiveItems)); }
@@ -141,11 +126,6 @@ function saveActiveTimer() {
 }
 function saveActiveAbstainTimers() {
   localStorage.setItem('pc_active_abstain_timers', JSON.stringify(activeAbstainTimers));
-}
-function saveGamePoints() {
-  localStorage.setItem('pc_game_points', String(gamePoints));
-  localStorage.setItem('pc_game_added_scores', JSON.stringify(gameAddedScores));
-  localStorage.setItem('pc_game_spend_log', JSON.stringify(gameSpendLog));
 }
 
 function formatKey(d) {
@@ -226,19 +206,18 @@ function updateReorderButtonVisibility() {
 function switchTab(tab) {
   checkMidnightRollover(); // 탭을 바꿔서 볼 때마다 날짜가 넘어가 있었는지 한 번 더 확인 (이월 누락 방지)
   currentTab = tab;
-  ['plan','todo','watch','memo','game'].forEach(t => {
+  ['plan','todo','watch','memo'].forEach(t => {
     document.getElementById(`tabBtn-${t}`).classList.toggle('active', tab === t);
     document.getElementById(`page-${t}`).classList.toggle('hidden', tab !== t);
   });
   updateReorderButtonVisibility();
   if (tab === 'memo') {
     renderMemoHeader();
+    renderPinnedMemos();
     renderMemos();
   } else if (tab === 'watch') {
     renderWatchHeader();
     renderWatchBlocks();
-  } else if (tab === 'game') {
-    renderGamePoints();
   } else if (tab === 'plan') {
     renderPlanList();
   }
@@ -277,14 +256,12 @@ function changeDay(delta) {
   viewingDateKey = formatKey(d);
   renderDayHeader();
   renderBlocks();
-  renderScore();
 }
 
 function jumpToday() {
   viewingDateKey = TODAY_KEY();
   renderDayHeader();
   renderBlocks();
-  renderScore();
 }
 
 function renderDayHeader() {
@@ -618,7 +595,7 @@ function submitBlockForm() {
     day.blocks.push(block);
   }
 
-  saveDays(); renderBlocks(); renderScore(); closeOverlay('blockFormOverlay');
+  saveDays(); renderBlocks(); closeOverlay('blockFormOverlay');
 }
 
 // carryover on/off 전환 처리. 켜질 때 새 체인 ID 발급, 꺼질 때 체인 중단 처리.
@@ -665,7 +642,7 @@ function askDeleteBlock(id) {
       delete activeAbstainTimers[deleteBlockId];
       saveActiveAbstainTimers();
     }
-    saveDays(); renderBlocks(); renderScore(); closeOverlay('confirmOverlay');
+    saveDays(); renderBlocks(); closeOverlay('confirmOverlay');
   };
   document.getElementById('confirmOverlay').classList.add('open');
 }
@@ -675,7 +652,7 @@ function changeBlockCounter(id, delta) {
   const b = day.blocks.find(x => x.id === id);
   if (!b) return;
   b.current = Math.max(0, b.current + delta); // 초과달성 허용: 상한 없음
-  saveDays(); renderBlocks(); renderScore();
+  saveDays(); renderBlocks();
 }
 
 function toggleBlockDone(id) {
@@ -689,7 +666,7 @@ function toggleBlockDone(id) {
     const elapsedMs = stopActiveTimerForBlock(b, id);
     if (elapsedMs >= 1000) showToast(`완료 처리되어 시간재기도 함께 멈췄어요 (${formatDurationShort(elapsedMs)})`);
   }
-  saveDays(); renderBlocks(); renderScore();
+  saveDays(); renderBlocks();
 }
 
 // 시트가 열려있지 않아도(카드에서 직접 완료 토글하는 경우) 안전하게 타이머를 멈추고 세션을 기록한다.
@@ -761,7 +738,7 @@ function postponeBlock(mode) {
   const targetDay = ensureDay(targetKey);
   targetDay.blocks.push(moved);
 
-  saveDays(); renderBlocks(); renderScore(); closeOverlay('postponeOverlay');
+  saveDays(); renderBlocks(); closeOverlay('postponeOverlay');
   const targetD = keyToDate(targetKey);
   showToast(`${targetD.getMonth()+1}월 ${targetD.getDate()}일로 미뤘어요`);
 }
@@ -886,39 +863,6 @@ function isAbstainOverLimit(b) {
   if (b.progressType === 'counter') return (b.total > 0) && b.current > b.total;
   if (b.progressType === 'timer') return abstainTimerTotalMs(b) > (b.limitMinutes || 0) * 60 * 1000;
   return false;
-}
-
-// 초과달성 시 추가 점수 (절댓값 점수에 초과 비율을 곱한 보너스, 기본 점수에 추가로 더해짐)
-// 절제(abstain) 블록은 초과가 보너스가 아니라 감점 대상이므로 여기서는 항상 0.
-function blockOverAchieveBonus(b) {
-  if (b.type === 'abstain') return 0;
-  if (b.progressType !== 'counter') return 0;
-  if (b.current <= b.total || b.total <= 0) return 0;
-  const overFrac = (b.current - b.total) / b.total; // 초과 비율
-  const w = weights[b.type] ?? 5;
-  return overFrac * w; // 절댓값 점수에 비례한 보너스
-}
-
-// 이행 블록에서 특정 날짜의 "그 날만의 진행도"를 계산.
-// 전날부터 이어진 블록이라면 (전날 진행도) → (이날 진행도)의 증분만 그날 기여로 본다.
-// 루틴은 매일 리셋이므로 해당 없음. toggle은 그날 done 여부로만 판단.
-function blockDayFraction(b, dayKey) {
-  if (!b.carryover || b.type === 'routine') return blockProgressFraction(b);
-  if (b.progressType === 'toggle') return b.done ? 1 : 0;
-  if (b.progressType === 'counter') {
-    const todayFrac = b.total > 0 ? Math.min(1, b.current / b.total) : 0;
-    // 전날 같은 carryoverId 블록을 찾아 전날 진행도 계산
-    const prevKey = addDaysToKey(dayKey, -1);
-    const prevDay = days[prevKey];
-    let prevFrac = 0;
-    if (prevDay && b.carryoverId) {
-      const prevBlock = prevDay.blocks.find(x => x.carryoverId === b.carryoverId);
-      if (prevBlock) prevFrac = prevBlock.total > 0 ? Math.min(1, prevBlock.current / prevBlock.total) : 0;
-    }
-    // 그날 달성한 증분 (0 이상)
-    return Math.max(0, todayFrac - prevFrac);
-  }
-  return blockProgressFraction(b);
 }
 
 function isBlockComplete(b) {
@@ -1235,111 +1179,6 @@ function renderBlocks() {
 /* =========================================================
    YESTERDAY COPY (수동) — carryover 블록은 자동으로 이어지므로 제외
    ========================================================= */
-/* =========================================================
-   SCORE CALCULATION (절댓값 합산 — 100점 캡 없음)
-   각 블록 타입의 weights[type] 값은 "절댓값 점수"다. 완료된 항목은 그 값 전체,
-   카운터형처럼 부분 진행이 있는 항목은 (진행 비율 × 절댓값)만큼 점수를 더한다.
-   집중시간/감상도 동일한 원리로 (달성 비율 × 절댓값) 점수를 더한다.
-   하루 총점은 모든 항목의 점수를 단순히 다 더한 값 — 100점 만점 캡이 없다.
-   ========================================================= */
-const FOCUS_GOAL_MINUTES_DEFAULT = 120;
-function getFocusGoalMs() {
-  const mins = weights.focusGoalMinutes ?? FOCUS_GOAL_MINUTES_DEFAULT;
-  return mins * 60 * 1000;
-}
-
-function dayTotalFocusMs(day) {
-  return day.blocks.reduce((sum, b) => sum + blockTotalFocusMs(b), 0);
-}
-
-// 하루치 점수를 절댓값 합산 방식으로 계산.
-// fracFn(b) : 블록 b의 그날 진행 비율(0~1)을 반환하는 함수 — 오늘 화면용은 blockProgressFraction,
-//             특정 과거 날짜의 "그날만의 기여도"용은 blockDayFraction을 넘겨받아 사용한다.
-// 절제(abstain) 유형은 일반 블록과 점수 부호가 반대다: 상한을 넘기 전까지는 점수에 영향이 없고,
-// 한 번 넘으면 그 즉시 weights.abstain 만큼 감점되며(maxScore에는 포함 안 됨), 그 이후 더 써도 추가 감점은 없다.
-function computeDayScoreRaw(day, dayKey, fracFn) {
-  const scorable = day.blocks.filter(b => b.progressType !== 'none' && b.type !== 'abstain');
-  const abstainBlocks = day.blocks.filter(b => b.type === 'abstain');
-  const totalFocusMs = dayTotalFocusMs(day);
-  const focusWeight = weights.focus ?? 0;
-  const hasFocusComponent = focusWeight > 0;
-  const watchWeight = weights.watch ?? 0;
-  const watchFrac = dayWatchScoreFraction(day);
-  const hasWatchComponent = watchWeight > 0 && watchFrac !== null;
-
-  if (!scorable.length && !hasFocusComponent && !hasWatchComponent && !abstainBlocks.length) {
-    return { score: null, maxScore: 0, totalFocusMs, hasAny: false };
-  }
-
-  let score = 0, maxScore = 0;
-  scorable.forEach(b => {
-    const w = weights[b.type] ?? 5;
-    const frac = fracFn(b, dayKey);
-    score += w * (frac ?? 0);
-    maxScore += w;
-  });
-  if (hasFocusComponent) {
-    const focusFrac = Math.min(1, totalFocusMs / getFocusGoalMs());
-    score += focusWeight * focusFrac;
-    maxScore += focusWeight;
-  }
-  if (hasWatchComponent) {
-    score += watchWeight * watchFrac;
-    maxScore += watchWeight;
-  }
-  // 초과달성 보너스: 절댓값 점수에 비례해 추가로 더해짐 (maxScore에는 포함 안 됨)
-  let overBonus = 0;
-  scorable.forEach(b => { overBonus += blockOverAchieveBonus(b); });
-  // 절제 블록 감점: 상한을 넘은 블록마다 weights.abstain만큼 한 번씩 깎임
-  let abstainPenalty = 0;
-  const abstainWeight = weights.abstain ?? 5;
-  abstainBlocks.forEach(b => { if (isAbstainOverLimit(b)) abstainPenalty += abstainWeight; });
-  score = Math.round((score + overBonus - abstainPenalty) * 10) / 10;
-  return { score, maxScore: Math.round(maxScore * 10) / 10, totalFocusMs, hasAny: true };
-}
-
-function renderScore() {
-  const day = ensureDay(viewingDateKey);
-  const el = document.getElementById('scoreCard');
-  const result = computeDayScoreRaw(day, viewingDateKey, blockProgressFraction);
-
-  if (!result.hasAny) {
-    el.innerHTML = `<div class="score-top"><div class="score-num">—</div></div>
-      <div class="score-feedback">진행 체크가 있는 블록을 추가하면 점수가 표시돼요.</div>
-      <div class="score-bottom-row"><span></span>${renderFeedbackButton()}</div>`;
-    return;
-  }
-
-  const { score, maxScore, totalFocusMs } = result;
-  const focusWeight = weights.focus ?? 0;
-  const hasFocusComponent = focusWeight > 0;
-  // 진행 막대는 "오늘 다 채웠을 때의 기준 점수(maxScore)" 대비 현재 점수 비율로 표시 (절제 감점으로 음수가 될 수도 있어 0 이상으로 고정)
-  const barPct = maxScore > 0 ? Math.max(0, Math.min(100, Math.round((score / maxScore) * 100))) : (score > 0 ? 100 : 0);
-
-  let feedback;
-  if (score < 0) feedback = '절제 상한을 넘긴 항목이 있어 오늘 점수가 깎였어요. 내일 다시 챙겨봐요.';
-  else if (barPct >= 90) feedback = '오늘 하루를 알차게 채웠어요. 훌륭해요!';
-  else if (barPct >= 70) feedback = '꽤 잘 해내고 있어요. 남은 것도 마무리해봐요.';
-  else if (barPct >= 40) feedback = '절반 정도 진행됐어요. 천천히 이어가요.';
-  else if (barPct > 0) feedback = '이제 시작이에요. 하나씩 차근차근 해봐요.';
-  else feedback = '아직 시작 전이에요. 작은 것부터 시작해볼까요?';
-
-  el.innerHTML = `
-    <div class="score-top"><div class="score-num">${score}${maxScore > 0 ? `<span>/${maxScore}</span>` : ''}</div></div>
-    <div class="score-feedback">${feedback}</div>
-    <div class="score-bar"><div class="score-bar-fill" style="width:${barPct}%"></div></div>
-    <div class="score-bottom-row">
-      ${hasFocusComponent ? `<span class="score-focus-row">집중 <strong>${formatDurationShort(totalFocusMs)}</strong></span>` : '<span></span>'}
-      ${renderFeedbackButton()}
-    </div>
-  `;
-}
-
-function renderFeedbackButton() {
-  const isToday = viewingDateKey === TODAY_KEY();
-  if (!isToday) return '';
-  return `<button class="score-feedback-btn" onclick="openYesterdayFeedback()">어제 피드백</button>`;
-}
 
 /* =========================================================
    FOCUS TIMER SHEET
@@ -1461,7 +1300,7 @@ function timerTick() {
     }
   });
   // 상한을 막 넘긴 시점이면 점수 표시와 카드의 초과 배지를 갱신 (가벼운 부분 갱신 대신 안전하게 전체 리렌더)
-  if (crossedLimitJustNow) { renderBlocks(); renderScore(); }
+  if (crossedLimitJustNow) { renderBlocks(); }
 }
 
 // 절제 블록의 "시간재기형" 진행 시간 합계. 보조 집중타이머(sessions)와는 별도로
@@ -1498,7 +1337,7 @@ function stopAbstainTimer(blockId) {
       saveDays();
     }
   }
-  renderBlocks(); renderScore();
+  renderBlocks();
 }
 
 function timerStart() {
@@ -1552,7 +1391,6 @@ function timerStop() {
   saveActiveTimer();
   renderTimerSheet();
   renderBlocks();
-  renderScore();
   showToast(`${formatDurationShort(elapsedMs)} 기록했어요`);
 }
 
@@ -1588,7 +1426,6 @@ function addManualSession() {
   saveDays();
   renderTimerSheet();
   renderBlocks();
-  renderScore();
   showToast('사이클을 추가했어요');
   toggleManualEntry();
 }
@@ -1620,7 +1457,6 @@ function deleteSession(idx) {
   saveDays();
   renderTimerSheet();
   renderBlocks();
-  renderScore();
 }
 
 /* =========================================================
@@ -2606,6 +2442,7 @@ function openWatchAdd() {
   document.getElementById('watchSheetTitle').textContent = '감상 추가';
   document.getElementById('wfName').value = '';
   document.getElementById('wfAuthor').value = '';
+  document.getElementById('wfDesc').value = '';
   document.getElementById('wfProgress').value = '0';
   // '예정'/'종료' 서브탭에서 추가하면 그 상태로 바로 시작되게 한다 ('종료'는 보관 체크로 처리)
   document.getElementById('wfArchive').checked = (currentWatchSubtab === 'archive');
@@ -2627,6 +2464,7 @@ function openWatchEdit(id) {
   document.getElementById('watchSheetTitle').textContent = '감상 수정';
   document.getElementById('wfName').value = w.name;
   document.getElementById('wfAuthor').value = w.author || '';
+  document.getElementById('wfDesc').value = w.desc || '';
   document.getElementById('wfProgress').value = w.progress;
   document.getElementById('wfArchive').checked = !!w.archived;
   document.getElementById('wfPlanned').checked = !!w.planned;
@@ -2641,6 +2479,7 @@ function openWatchEdit(id) {
 function submitWatchForm() {
   const name = document.getElementById('wfName').value.trim();
   const author = document.getElementById('wfAuthor').value.trim();
+  const desc = document.getElementById('wfDesc').value.trim();
   let progress = parseInt(document.getElementById('wfProgress').value);
   const archived = document.getElementById('wfArchive').checked;
   const planned = document.getElementById('wfPlanned').checked;
@@ -2651,7 +2490,7 @@ function submitWatchForm() {
 
   // '종료'/'예정' 탭에서 직접 연 수정 폼이면 오늘 원본이 아니라 해당 아카이브 항목을 고친다.
   if (editWatchArchiveKind !== null) {
-    submitWatchArchiveItemEdit(name, author, progress, archived, planned);
+    submitWatchArchiveItemEdit(name, author, desc, progress, archived, planned);
     return;
   }
 
@@ -2661,7 +2500,7 @@ function submitWatchForm() {
   if (editWatchId !== null) {
     w = day.watchBlocks.find(x => x.id === editWatchId);
     if (w) {
-      w.name = name; w.author = author; w.type = selectedWatchType;
+      w.name = name; w.author = author; w.desc = desc; w.type = selectedWatchType;
       w.progress = progress; w.archived = archived; w.planned = planned;
       // 진행도/보관 상태가 바뀌면 이월 체인의 stopped 여부를 다시 맞춰준다.
       // (100% 또는 보관 중이면 멈춤, 둘 다 해제되면 다시 이월 대상으로 재개)
@@ -2674,7 +2513,7 @@ function submitWatchForm() {
     const chainId = 'w' + Date.now() + Math.floor(Math.random()*1000);
     w = {
       id: Date.now() + Math.floor(Math.random()*1000),
-      name, author, type: selectedWatchType, progress, archived, planned,
+      name, author, desc, type: selectedWatchType, progress, archived, planned,
       watchChainId: chainId, memos: []
     };
     watchChainMeta[chainId] = { stopped: progress >= 100 || archived };
@@ -2682,19 +2521,19 @@ function submitWatchForm() {
     day.watchBlocks.push(w);
   }
 
-  saveDays(); renderWatchBlocks(); renderScore(); closeOverlay('watchFormOverlay');
+  saveDays(); renderWatchBlocks(); closeOverlay('watchFormOverlay');
   if (w) syncWatchArchiveLink(w, viewingWatchDateKey);
 }
 
 // '종료'/'예정' 탭에서 직접 연 수정 폼 제출 처리.
 // 아직 오늘 원본과 연결돼 있다면 원본도 같은 내용으로 같이 갱신해서 자연스럽게 동기화되게 한다.
-function submitWatchArchiveItemEdit(name, author, progress, archived, planned) {
+function submitWatchArchiveItemEdit(name, author, desc, progress, archived, planned) {
   const kind = editWatchArchiveKind;
   const store = getWatchArchiveStore(kind);
   const item = store.find(x => x.id === editWatchId);
   if (!item) { closeOverlay('watchFormOverlay'); return; }
 
-  item.name = name; item.author = author; item.type = selectedWatchType; item.progress = progress;
+  item.name = name; item.author = author; item.desc = desc; item.type = selectedWatchType; item.progress = progress;
   if (kind === 'archive') item.archived = archived;
 
   const isLinked = item.linkedWatchId !== null && item.linkedWatchId !== undefined;
@@ -2702,7 +2541,7 @@ function submitWatchArchiveItemEdit(name, author, progress, archived, planned) {
     const todayDay = ensureDay(TODAY_KEY());
     const w = todayDay.watchBlocks.find(x => x.id === item.linkedWatchId);
     if (w) {
-      w.name = name; w.author = author; w.type = selectedWatchType; w.progress = progress;
+      w.name = name; w.author = author; w.desc = desc; w.type = selectedWatchType; w.progress = progress;
       if (kind === 'archive') w.archived = archived;
       if (kind === 'planned') w.planned = planned;
       if (w.watchChainId) {
@@ -2711,7 +2550,7 @@ function submitWatchArchiveItemEdit(name, author, progress, archived, planned) {
       }
       saveDays();
       syncWatchArchiveLink(w, TODAY_KEY()); // 조건이 깨졌으면 이 함수가 store에서 알맞게 제거/갱신해줌
-      renderWatchBlocks(); renderScore(); closeOverlay('watchFormOverlay');
+      renderWatchBlocks(); closeOverlay('watchFormOverlay');
       return;
     }
   }
@@ -2724,7 +2563,7 @@ function submitWatchArchiveItemEdit(name, author, progress, archived, planned) {
   } else {
     saveWatchArchiveStore(kind);
   }
-  renderWatchBlocks(); renderScore(); closeOverlay('watchFormOverlay');
+  renderWatchBlocks(); closeOverlay('watchFormOverlay');
 }
 
 function askDeleteWatch(id) {
@@ -2745,7 +2584,7 @@ function askDeleteWatch(id) {
     watchPlannedItems = watchPlannedItems.filter(x => x.linkedWatchId !== w.id);
     if (watchArchiveItems.length !== beforeArchiveLen) saveWatchArchiveItems();
     if (watchPlannedItems.length !== beforePlannedLen) saveWatchPlannedItems();
-    saveDays(); renderWatchBlocks(); renderScore(); closeOverlay('confirmOverlay');
+    saveDays(); renderWatchBlocks(); closeOverlay('confirmOverlay');
   };
   document.getElementById('confirmOverlay').classList.add('open');
 }
@@ -2792,7 +2631,7 @@ function submitWatchProgress() {
     watchChainMeta[w.watchChainId] = { stopped: false };
     saveWatchChainMeta();
   }
-  saveDays(); renderWatchBlocks(); renderScore(); closeOverlay('watchProgressOverlay');
+  saveDays(); renderWatchBlocks(); closeOverlay('watchProgressOverlay');
   syncWatchArchiveLink(w, viewingWatchDateKey);
 }
 
@@ -2805,7 +2644,7 @@ function toggleWatchArchive(id) {
     watchChainMeta[w.watchChainId] = { stopped: w.archived || w.progress >= 100 };
     saveWatchChainMeta();
   }
-  saveDays(); renderWatchBlocks(); renderScore();
+  saveDays(); renderWatchBlocks();
   syncWatchArchiveLink(w, viewingWatchDateKey);
 }
 
@@ -2814,7 +2653,7 @@ function toggleWatchPlanned(id) {
   const w = day.watchBlocks.find(x => x.id === id);
   if (!w) return;
   w.planned = !w.planned;
-  saveDays(); renderWatchBlocks(); renderScore();
+  saveDays(); renderWatchBlocks();
   syncWatchArchiveLink(w, viewingWatchDateKey);
 }
 
@@ -2836,14 +2675,14 @@ function syncWatchArchiveLink(w, dateKey) {
     if (!archiveItem) {
       archiveItem = {
         id: Date.now() + Math.floor(Math.random()*100000),
-        linkedWatchId: w.id, name: w.name, author: w.author, type: w.type,
+        linkedWatchId: w.id, name: w.name, author: w.author, desc: w.desc, type: w.type,
         progress: w.progress, archived: w.archived,
         finishedDate: dateKey, memos: (w.memos || []).slice(),
         order: watchArchiveItems.length,
       };
       watchArchiveItems.push(archiveItem);
     } else {
-      archiveItem.name = w.name; archiveItem.author = w.author; archiveItem.type = w.type;
+      archiveItem.name = w.name; archiveItem.author = w.author; archiveItem.desc = w.desc; archiveItem.type = w.type;
       archiveItem.progress = w.progress; archiveItem.archived = w.archived;
       archiveItem.finishedDate = dateKey; archiveItem.memos = (w.memos || []).slice();
     }
@@ -2860,13 +2699,13 @@ function syncWatchArchiveLink(w, dateKey) {
     if (!plannedItem) {
       plannedItem = {
         id: Date.now() + Math.floor(Math.random()*100000) + 1,
-        linkedWatchId: w.id, name: w.name, author: w.author, type: w.type,
+        linkedWatchId: w.id, name: w.name, author: w.author, desc: w.desc, type: w.type,
         progress: w.progress, memos: (w.memos || []).slice(),
         order: watchPlannedItems.length,
       };
       watchPlannedItems.push(plannedItem);
     } else {
-      plannedItem.name = w.name; plannedItem.author = w.author; plannedItem.type = w.type;
+      plannedItem.name = w.name; plannedItem.author = w.author; plannedItem.desc = w.desc; plannedItem.type = w.type;
       plannedItem.progress = w.progress; plannedItem.memos = (w.memos || []).slice();
     }
     saveWatchPlannedItems();
@@ -2959,6 +2798,7 @@ function renderWatchOngoing() {
             <button class="move-btn" onclick="moveWatchBlock(${w.id},1)" ${displayIdx===sorted.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           </div>
         </div>
+        ${w.desc ? `<div class="block-desc">${escLinkify(w.desc, 32)}</div>` : ''}
         <div class="block-progress-row">
           <button class="watch-progress-btn" onclick="openWatchProgressEdit(${w.id})">${w.progress}%</button>
           <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${w.progress}%"></div></div></div>
@@ -3033,6 +2873,7 @@ function renderWatchArchiveTab() {
             </button>
           </div>
         </div>
+        ${item.desc ? `<div class="block-desc">${escLinkify(item.desc, 32)}</div>` : ''}
         <div class="block-progress-row">
           <span class="watch-progress-btn" style="cursor:default;">${item.progress}%</span>
           <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${item.progress}%"></div></div></div>
@@ -3090,6 +2931,7 @@ function renderWatchPlannedTab() {
             <button class="move-btn" onclick="moveWatchPlannedItem(${idx},1)" ${idx===sorted.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           </div>
         </div>
+        ${item.desc ? `<div class="block-desc">${escLinkify(item.desc, 32)}</div>` : ''}
         <div class="block-progress-row">
           <span class="watch-progress-btn" style="cursor:default;">${item.progress}%</span>
           <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${item.progress}%"></div></div></div>
@@ -3145,6 +2987,7 @@ function openWatchArchiveEdit(kind, id) {
   document.getElementById('watchSheetTitle').textContent = '감상 수정';
   document.getElementById('wfName').value = item.name;
   document.getElementById('wfAuthor').value = item.author || '';
+  document.getElementById('wfDesc').value = item.desc || '';
   document.getElementById('wfProgress').value = item.progress;
   document.getElementById('wfArchive').checked = kind === 'archive' ? !!item.archived : false;
   document.getElementById('wfPlanned').checked = kind === 'planned';
@@ -3346,16 +3189,6 @@ function syncWatchForToday() {
   return addedCount;
 }
 
-function dayWatchScoreFraction(day) {
-  // 그날 감상 블록들의 평균 진행도(0~1)를 감상 항목의 점수로 사용.
-  // "예정"으로 체크된 항목은 아직 시작 전이므로 평균 계산에서 제외한다.
-  if (!day.watchBlocks || !day.watchBlocks.length) return null;
-  const scorable = day.watchBlocks.filter(w => !w.planned);
-  if (!scorable.length) return null;
-  const sum = scorable.reduce((s, w) => s + (w.progress / 100), 0);
-  return sum / scorable.length;
-}
-
 /* =========================================================
    AUTO-ROLLOVER (오전 4시 기준)
    ========================================================= */
@@ -3370,9 +3203,6 @@ function checkMidnightRollover() {
   if (today !== lastKnownTodayKey) {
     lastKnownTodayKey = today;
     saveLastKnownTodayKey();
-    // 어제 날짜가 마무리됐으므로 게임 포인트를 재계산
-    reconcileGamePoints();
-    if (currentTab === 'game') renderGamePoints();
     const added = syncCarryoversForToday();
     const watchAdded = syncWatchForToday();
     detachWatchArchiveLinks(); // 어제까지 연결되어 있던 종료/예정 복사본들을 독립시킴
@@ -3382,7 +3212,7 @@ function checkMidnightRollover() {
     }
     if (viewingWatchDateKey === today) renderWatchBlocks();
   }
-  if (viewingDateKey === today) { renderDayHeader(); renderScore(); }
+  if (viewingDateKey === today) { renderDayHeader(); }
   if (viewingWatchDateKey === today) renderWatchHeader();
 }
 setInterval(checkMidnightRollover, 60 * 1000);
@@ -3400,110 +3230,6 @@ window.addEventListener('pageshow', checkMidnightRollover);
 // "마감된 날"이란 오늘(가상 오늘, 오전4시 기준)보다 이전인 모든 날짜를 말한다.
 // 마감된 날은 더 이상 변동이 없을 거라 기대하지만, 사용자가 과거 기록을 수정/삭제하면
 // 그 날의 점수가 바뀔 수 있다. 이 함수는 "이미 합산해둔 점수"와 "지금 다시 계산한 점수"를
-// 비교해서 차이만큼 gamePoints를 보정하고, 합산 기록(gameAddedScores)을 갱신한다.
-//
-// 검사 대상 날짜는 (a) days에 실제 기록이 있는 날짜 + (b) 이전에 합산 기록이 있는 날짜의
-// 합집합으로 한정한다 — 데이터가 전혀 없던 날짜까지 매번 훑을 필요는 없다.
-function reconcileGamePoints() {
-  const todayKey = TODAY_KEY();
-  const candidateKeys = new Set([...Object.keys(days), ...Object.keys(gameAddedScores)]);
-  let changed = false;
-
-  candidateKeys.forEach(key => {
-    if (key >= todayKey) return; // 오늘 또는 미래 날짜는 아직 마감되지 않음 — 건너뜀
-
-    const data = computeDayScore(key);
-    const newScore = (data && data.score !== null) ? data.score : 0;
-    const oldScore = gameAddedScores[key];
-
-    if (oldScore === undefined || oldScore !== newScore) {
-      gamePoints += (newScore - (oldScore ?? 0));
-      gameAddedScores[key] = newScore;
-      changed = true;
-    }
-  });
-
-  if (changed) {
-    gamePoints = Math.max(0, gamePoints); // 음수로 내려가지 않게 안전망
-    saveGamePoints();
-  }
-}
-
-function renderGamePoints() {
-  document.getElementById('gamePointsNum').textContent = Math.round(gamePoints).toLocaleString();
-  renderGameLedger();
-}
-
-function renderGameLedger() {
-  const el = document.getElementById('gameLedger');
-  if (!el) return;
-  if (!gameSpendLog.length) {
-    el.innerHTML = `<div class="game-ledger-empty">소모 내역이 없어요</div>`;
-    return;
-  }
-  // 최신 순으로 표시
-  const sorted = gameSpendLog.slice().reverse();
-  el.innerHTML = sorted.map(item => {
-    const d = new Date(item.time);
-    const dateStr = `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
-    const timeStr = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    return `<div class="ledger-row">
-      <div class="ledger-row-left">
-        <div class="ledger-reason">${esc(item.reason)}</div>
-        <div class="ledger-date">${dateStr} ${timeStr}</div>
-      </div>
-      <div class="ledger-amount">−${item.amount.toLocaleString()}</div>
-    </div>`;
-  }).join('');
-}
-
-function openSpendOverlay() {
-  document.getElementById('spendAmount').value = '';
-  document.getElementById('spendReason').value = '';
-  document.getElementById('spendOverlay').classList.add('open');
-  setTimeout(() => document.getElementById('spendAmount').focus(), 80);
-}
-
-function submitSpend() {
-  const amount = parseInt(document.getElementById('spendAmount').value);
-  const reason = document.getElementById('spendReason').value.trim();
-  if (!amount || amount < 1) { document.getElementById('spendAmount').focus(); return; }
-  if (!reason) { document.getElementById('spendReason').focus(); return; }
-  if (amount > gamePoints) { showToast('보유 포인트보다 많이 소모할 수 없어요'); return; }
-  gamePoints -= amount;
-  gameSpendLog.push({ amount, reason, time: new Date().toISOString() });
-  saveGamePoints();
-  renderGamePoints();
-  closeOverlay('spendOverlay');
-  showToast(`${amount.toLocaleString()}포인트를 소모했어요`);
-}
-
-// 저장된 모든 날짜 기록을 처음부터 다시 훑어 누적 포인트를 재계산한다.
-// 블록을 지우거나 수정해서 과거 점수가 달라졌을 때, 이미 더해진 포인트에는
-// 자동으로 반영되지 않으므로 이 버튼으로 강제 재동기화한다.
-// 수동 "다시 계산" 버튼용: 현재 모든 데이터를 기준으로 누적 포인트를 처음부터 다시 합산한다.
-// (오늘은 아직 끝나지 않은 날이므로 제외한다.)
-function recalcGamePoints() {
-  const today = TODAY_KEY();
-  let total = 0;
-  const newAddedScores = {};
-  const sortedKeys = Object.keys(days).sort(); // YYYY-MM-DD 문자열은 사전순 = 날짜순
-
-  sortedKeys.forEach(key => {
-    if (key >= today) return; // 오늘/미래는 아직 진행 중이므로 제외
-    const data = computeDayScore(key);
-    const score = (data && data.score !== null) ? data.score : 0;
-    total += score;
-    newAddedScores[key] = score;
-  });
-
-  gamePoints = Math.max(0, total);
-  gameAddedScores = newAddedScores;
-  saveGamePoints();
-  renderGamePoints();
-  showToast('현재 기록을 기준으로 누적 포인트를 다시 계산했어요');
-}
-
 /* =========================================================
    MEMO PAGE
    ========================================================= */
@@ -3570,7 +3296,66 @@ function deleteMemo(id) {
   if (!memos[viewingMemoDateKey]) return;
   memos[viewingMemoDateKey] = memos[viewingMemoDateKey].filter(x => x.id !== id);
   saveMemos();
+  // 삭제되는 메모가 고정되어 있었다면 고정에서도 자동으로 해제
+  const beforeLen = pinnedMemos.length;
+  pinnedMemos = pinnedMemos.filter(p => !(p.memoId === id && p.dateKey === viewingMemoDateKey));
+  if (pinnedMemos.length !== beforeLen) { savePinnedMemos(); renderPinnedMemos(); }
   renderMemos();
+}
+
+/* =========================================================
+   PINNED MEMOS
+   날짜와 무관하게 메모 탭 상단에 공지처럼 항상 떠 있는 메모. 최대 3개까지 고정 가능하며,
+   더 고정하려면 기존 고정 중 하나를 먼저 해제해야 한다(자동으로 밀어내지 않음).
+   원본 메모가 삭제되면 고정 목록에서도 자동으로 빠진다.
+   ========================================================= */
+const MAX_PINNED_MEMOS = 3;
+
+function toggleMemoPin(memoId, dateKey) {
+  const idx = pinnedMemos.findIndex(p => p.memoId === memoId && p.dateKey === dateKey);
+  if (idx >= 0) {
+    pinnedMemos.splice(idx, 1);
+  } else {
+    if (pinnedMemos.length >= MAX_PINNED_MEMOS) {
+      showToast(`고정은 최대 ${MAX_PINNED_MEMOS}개까지예요. 기존 고정을 먼저 해제해주세요`);
+      return;
+    }
+    pinnedMemos.push({ memoId, dateKey });
+  }
+  savePinnedMemos();
+  renderPinnedMemos();
+  renderMemos(); // 메모 목록의 "고정/고정됨" 버튼 상태도 같이 갱신
+}
+
+function renderPinnedMemos() {
+  const el = document.getElementById('pinnedMemoList');
+  if (!el) return; // 메모 탭이 아직 렌더링 전일 수 있음
+
+  // 원본이 이미 삭제된 고정 항목이 있으면 정리 (예: 다른 경로로 데이터가 바뀐 경우의 안전장치)
+  const valid = [];
+  let changed = false;
+  pinnedMemos.forEach(p => {
+    const list = memos[p.dateKey] || [];
+    if (list.some(m => m.id === p.memoId)) valid.push(p);
+    else changed = true;
+  });
+  if (changed) { pinnedMemos = valid; savePinnedMemos(); }
+
+  if (!pinnedMemos.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+
+  el.innerHTML = pinnedMemos.map(p => {
+    const list = memos[p.dateKey] || [];
+    const m = list.find(x => x.id === p.memoId);
+    if (!m) return '';
+    return `<div class="pinned-memo-row">
+      <svg class="pinned-memo-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M16 3a1 1 0 0 1 1 1v6.5l2.4 4.8a1 1 0 0 1-.9 1.45H13v5a1 1 0 1 1-2 0v-5H5.5a1 1 0 0 1-.9-1.45L7 10.5V4a1 1 0 0 1 1-1z"/></svg>
+      <span class="pinned-memo-text">${escLinkify(m.text, 60)}</span>
+      <button class="pinned-memo-unpin" onclick="toggleMemoPin(${m.id},'${p.dateKey}')" aria-label="고정 해제">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+  }).join('');
 }
 
 function renderMemos() {
@@ -3583,10 +3368,12 @@ function renderMemos() {
   el.innerHTML = list.map(m => {
     const t = new Date(m.time);
     const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+    const isPinned = pinnedMemos.some(p => p.memoId === m.id && p.dateKey === viewingMemoDateKey);
     return `<div class="memo-bubble">
       <div class="memo-text">${escLinkify(m.text, 40)}</div>
       <div class="memo-meta-row">
         <span class="memo-time">${timeStr}</span>
+        <button class="memo-pin-btn ${isPinned ? 'pinned' : ''}" onclick="toggleMemoPin(${m.id},'${viewingMemoDateKey}')">${isPinned ? '고정됨' : '고정'}</button>
         <button class="memo-copy-btn" onclick="copyMemo(${m.id})">복사</button>
         <button class="memo-delete-btn" onclick="deleteMemo(${m.id})">삭제</button>
       </div>
@@ -3598,71 +3385,6 @@ function renderMemos() {
 /* =========================================================
    YESTERDAY FEEDBACK
    ========================================================= */
-function computeDayScore(dayKey) {
-  const day = days[dayKey];
-  if (!day) return null;
-  const result = computeDayScoreRaw(day, dayKey, blockDayFraction);
-  return { score: result.score, maxScore: result.maxScore, blocks: day.blocks, watchBlocks: day.watchBlocks || [], totalFocusMs: result.totalFocusMs };
-}
-
-function openYesterdayFeedback() {
-  document.getElementById('feedbackOverlay').classList.add('open');
-  const body = document.getElementById('feedbackBody');
-  const yKey = addDaysToKey(TODAY_KEY(), -1);
-  const data = computeDayScore(yKey);
-
-  const hasBlocks = data && data.blocks && data.blocks.length;
-  const hasWatch = data && data.watchBlocks && data.watchBlocks.length;
-  if (!data || (!hasBlocks && !hasWatch)) {
-    body.innerHTML = `<span class="fb-loading">어제 기록이 없어요.</span>`;
-    return;
-  }
-
-  const lines = [];
-  lines.push(`어제(${yKey}) 달성 점수: ${data.score !== null ? data.score + (data.maxScore > 0 ? '/' + data.maxScore : '점') : '집계할 수 없음'}`);
-  if (data.totalFocusMs > 0) lines.push(`집중시간: ${formatDurationShort(data.totalFocusMs)}`);
-  if (hasBlocks) {
-    lines.push('');
-    lines.push('블록 요약:');
-    data.blocks.forEach(b => {
-      let line = `- ${b.name} (${TYPE_LABEL[b.type]})`;
-      if (b.progressType === 'counter') {
-        line += `: ${b.current}/${b.total}`;
-        if (b.type === 'abstain' && isAbstainOverLimit(b)) line += ' · 상한 초과';
-      } else if (b.progressType === 'toggle') line += `: ${b.done ? '완료' : '미완료'}`;
-      else if (b.progressType === 'timer') {
-        line += `: ${formatDurationShort(abstainTimerTotalMs(b))} / ${b.limitMinutes}분`;
-        if (isAbstainOverLimit(b)) line += ' · 상한 초과';
-      }
-      lines.push(line);
-    });
-  }
-  let watchSummaryLine = '';
-  if (hasWatch) {
-    lines.push('');
-    lines.push('감상 요약:');
-    data.watchBlocks.forEach(w => {
-      lines.push(`- ${w.name} (${WATCH_TYPE_LABEL[w.type]}): ${w.progress}%${w.planned ? ' · 예정' : ''}${w.archived ? ' · 보관' : ''}`);
-    });
-    const names = data.watchBlocks.map(w => w.name).join(', ');
-    watchSummaryLine = ` 그리고 ${names}${data.watchBlocks.length > 1 ? '를' : '을'} 접하며 감상 시간도 챙겼어요.`;
-  }
-
-  const score = data.score;
-  // 절댓값 합산 점수는 100점 캡이 없으므로, 그날의 maxScore(다 채웠을 때 점수) 대비 비율로 피드백 톤을 정한다.
-  const achievePct = (score !== null && data.maxScore > 0) ? (score / data.maxScore) * 100 : (score !== null ? (score > 0 ? 100 : 0) : null);
-  let summary;
-  if (score === null) summary = '어제는 진행 체크가 있는 블록이 없어서 점수를 매기긴 어렵지만, 기록을 남긴 것 자체로 의미가 있어요.';
-  else if (achievePct >= 90) summary = `어제는 ${score}점으로 정말 알찬 하루였어요. 계획한 것들을 거의 다 해냈네요. 오늘도 이 흐름을 이어가 보세요.`;
-  else if (achievePct >= 70) summary = `어제는 ${score}점으로 꽤 잘 보낸 하루였어요. 몇 가지가 남았지만 전반적으로 좋은 흐름이었어요.`;
-  else if (achievePct >= 40) summary = `어제는 ${score}점으로 절반 정도 진행됐어요. 무리한 계획이었는지, 컨디션 문제였는지 한번 돌아보면 오늘 도움이 될 거예요.`;
-  else if (score > 0) summary = `어제는 ${score}점으로 시작 단계에 머물렀어요. 괜찮아요, 오늘은 부담을 좀 줄여서 작은 것 하나부터 해보는 것도 방법이에요.`;
-  else summary = '어제는 거의 진행되지 못한 하루였어요. 너무 자책하지 말고, 오늘 할 일을 좀 더 작은 단위로 쪼개보는 게 도움이 될 수 있어요.';
-  summary += watchSummaryLine;
-
-  body.innerHTML = `<div style="margin-bottom:14px;">${esc(summary)}</div><div style="font-size:12.5px;color:var(--gray-400);white-space:pre-wrap;">${esc(lines.join('\n'))}</div>`;
-}
-
 /* =========================================================
    THEME (다크모드) — 'system'은 prefers-color-scheme을 따르고,
    'light'/'dark'는 메뉴에서 수동으로 선택한 값을 강제 적용한다.
@@ -3699,39 +3421,11 @@ if (window.matchMedia) {
    ========================================================= */
 function openMenu() {
   applyTheme();
-  document.getElementById('wSchedule').value = weights.schedule;
-  document.getElementById('wTodo').value = weights.todo;
-  document.getElementById('wOnce').value = weights.once;
-  document.getElementById('wLeisure').value = weights.leisure;
-  document.getElementById('wRoutine').value = weights.routine ?? 8;
-  document.getElementById('wFocus').value = weights.focus ?? 6;
-  document.getElementById('wWatch').value = weights.watch ?? 3;
-  document.getElementById('wUnspecified').value = weights.unspecified ?? 5;
-  document.getElementById('wAbstain').value = weights.abstain ?? 5;
   document.getElementById('menuOverlay').classList.add('open');
 }
 
-function saveMenuSettings() {
-  weights = {
-    schedule: parseFloat(document.getElementById('wSchedule').value) || 0,
-    todo: parseFloat(document.getElementById('wTodo').value) || 0,
-    once: parseFloat(document.getElementById('wOnce').value) || 0,
-    leisure: parseFloat(document.getElementById('wLeisure').value) || 0,
-    routine: parseFloat(document.getElementById('wRoutine').value) || 0,
-    focus: parseFloat(document.getElementById('wFocus').value) || 0,
-    watch: parseFloat(document.getElementById('wWatch').value) || 0,
-    unspecified: parseFloat(document.getElementById('wUnspecified').value) || 0,
-    abstain: parseFloat(document.getElementById('wAbstain').value) || 0,
-    focusGoalMinutes: weights.focusGoalMinutes ?? FOCUS_GOAL_MINUTES_DEFAULT,
-  };
-  saveWeightsToStorage();
-  renderScore();
-  closeOverlay('menuOverlay');
-  showToast('설정을 저장했어요');
-}
-
 function exportBackup() {
-  const data = { days, weights, carryoverMeta, watchChainMeta, memos, gamePoints, gameAddedScores, gameSpendLog, planBlocks, periodPlans, watchArchiveItems, watchPlannedItems, watchLists, exportedAt: new Date().toISOString() };
+  const data = { days, carryoverMeta, watchChainMeta, memos, pinnedMemos, planBlocks, periodPlans, watchArchiveItems, watchPlannedItems, watchLists, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3753,27 +3447,22 @@ function importBackup(e) {
       const data = JSON.parse(reader.result);
       if (!data || typeof data !== 'object') throw new Error('invalid');
       days = (data.days && typeof data.days === 'object') ? data.days : days;
-      weights = (data.weights && typeof data.weights === 'object') ? data.weights : weights;
       carryoverMeta = (data.carryoverMeta && typeof data.carryoverMeta === 'object') ? data.carryoverMeta : carryoverMeta;
       watchChainMeta = (data.watchChainMeta && typeof data.watchChainMeta === 'object') ? data.watchChainMeta : watchChainMeta;
       memos = (data.memos && typeof data.memos === 'object') ? data.memos : memos;
-      if (typeof data.gamePoints === 'number') gamePoints = data.gamePoints;
-      if (data.gameAddedScores && typeof data.gameAddedScores === 'object') gameAddedScores = data.gameAddedScores;
-      if (Array.isArray(data.gameSpendLog)) gameSpendLog = data.gameSpendLog;
+      if (Array.isArray(data.pinnedMemos)) pinnedMemos = data.pinnedMemos;
       if (Array.isArray(data.planBlocks)) planBlocks = data.planBlocks;
       if (Array.isArray(data.periodPlans)) periodPlans = data.periodPlans;
       if (Array.isArray(data.watchArchiveItems)) watchArchiveItems = data.watchArchiveItems;
       if (Array.isArray(data.watchPlannedItems)) watchPlannedItems = data.watchPlannedItems;
       if (Array.isArray(data.watchLists)) watchLists = data.watchLists;
-      saveDays(); saveWeightsToStorage(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); saveGamePoints();
+      saveDays(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); savePinnedMemos();
       savePlanBlocks(); savePeriodPlans(); saveWatchArchiveItems(); saveWatchPlannedItems(); saveWatchLists();
       syncCarryoversForToday();
       syncWatchForToday();
-      reconcileGamePoints();
-      renderDayHeader(); renderBlocks(); renderScore();
-      if (currentTab === 'memo') { renderMemoHeader(); renderMemos(); }
+      renderDayHeader(); renderBlocks();
+      if (currentTab === 'memo') { renderMemoHeader(); renderPinnedMemos(); renderMemos(); }
       if (currentTab === 'watch') { renderWatchHeader(); renderWatchBlocks(); }
-      if (currentTab === 'game') renderGamePoints();
       if (currentTab === 'plan') renderPlanList();
       closeOverlay('menuOverlay');
       showToast('백업을 불러왔어요');
@@ -3812,8 +3501,6 @@ if ('serviceWorker' in navigator) {
    INIT
    ========================================================= */
 applyTheme(); // 화면이 그려지기 전에 가장 먼저 테마를 적용해 깜빡임을 방지
-// 앱을 며칠 만에 다시 열었을 수도 있으니, 어제까지의 미합산 점수를 먼저 챙긴다.
-reconcileGamePoints();
 syncCarryoversForToday();
 syncWatchForToday();
 // lastKnownTodayKey(영구 저장된 값)와 비교해서, 마지막 세션 이후 실제로 자정을 넘긴
@@ -3825,8 +3512,7 @@ if (TODAY_KEY() !== lastKnownTodayKey) {
 }
 renderDayHeader();
 renderBlocks();
-renderScore();
-renderGamePoints();
+renderPinnedMemos();
 updateReorderButtonVisibility();
 initPlanSubtabSwipe();
 initWatchSubtabSwipe();
