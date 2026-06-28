@@ -317,6 +317,20 @@ function onTypeChanged() {
     intervalField.classList.add('hidden');
   }
 
+  // 절제는 항상 최상단에 고정 표시되는 유형이라 시간대 지정 자체가 의미 없어 선택지를 숨기고
+  // '미지정'으로 강제한다 (시간 지정/쪼개기 부가 필드도 함께 정리).
+  const timeField = document.getElementById('bfTimeField');
+  if (selectedType === 'abstain') {
+    timeField.classList.add('hidden');
+    selectedTime = 'none';
+    document.querySelectorAll('#bfTimeGroup .seg-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === 'none'));
+    pendingCustomTimeEntries = [];
+    toggleCustomTime();
+    toggleSplitFields();
+  } else {
+    timeField.classList.remove('hidden');
+  }
+
   const timerBtn = document.getElementById('bfProgressTimerBtn');
   const toggleBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="toggle"]');
   const noneBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="none"]');
@@ -483,35 +497,42 @@ function openBlockEdit(id) {
   document.getElementById('blockSheetTitle').textContent = '블록 수정';
   document.getElementById('bfName').value = b.name;
   document.getElementById('bfDesc').value = b.desc || '';
-  selectedType = b.type; selectedTime = b.time || 'none'; selectedProgress = b.progressType;
+  // 절제는 시간대 지정이 불가능한 유형이라, 과거에 시간이 지정되어 있던 데이터라도
+  // 수정 화면에서는 항상 '미지정'으로 강제해서 보여준다 (저장하면 그대로 정리됨).
+  selectedType = b.type; selectedTime = (b.type === 'abstain') ? 'none' : (b.time || 'none'); selectedProgress = b.progressType;
 
   document.querySelectorAll('#bfTypeGroup .seg-btn').forEach(btn => {
     btn.classList.toggle('selected', btn.dataset.val === b.type);
     // 루틴 블록은 다른 유형으로 전환 불가 (이행 체인 추적이 깨지는 걸 방지)
     btn.disabled = b.type === 'routine' && btn.dataset.val !== 'routine';
   });
-  document.querySelectorAll('#bfTimeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === (b.time || 'none')));
+  document.querySelectorAll('#bfTimeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === selectedTime));
   document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === b.progressType));
 
   const timerBtn = document.getElementById('bfProgressTimerBtn');
   const toggleBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="toggle"]');
   const noneBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="none"]');
   const totalLabel = document.getElementById('bfTotalLabel');
+  const timeField = document.getElementById('bfTimeField');
   if (b.type === 'abstain') {
     timerBtn.classList.remove('hidden');
     toggleBtn.classList.add('hidden');
     noneBtn.classList.add('hidden');
     totalLabel.textContent = '상한 수';
+    timeField.classList.add('hidden');
   } else {
     timerBtn.classList.add('hidden');
     toggleBtn.classList.remove('hidden');
     noneBtn.classList.remove('hidden');
     totalLabel.textContent = '목표 수';
+    timeField.classList.remove('hidden');
   }
 
-  document.getElementById('bfCustomTimeField').classList.toggle('hidden', b.time !== 'custom');
+  document.getElementById('bfCustomTimeField').classList.toggle('hidden', selectedTime !== 'custom');
   document.getElementById('bfCustomTimeInput').value = '';
-  if (b.customTimeEntries && b.customTimeEntries.length) {
+  if (b.type === 'abstain') {
+    pendingCustomTimeEntries = [];
+  } else if (b.customTimeEntries && b.customTimeEntries.length) {
     pendingCustomTimeEntries = b.customTimeEntries.map(e => ({ ...e }));
   } else if (b.customTime) {
     // 구버전 데이터(단일 문자열 시각) — 수정 화면에서는 '단일' 항목 하나로 보여준다
@@ -523,7 +544,7 @@ function openBlockEdit(id) {
 
   // 쪼개기 필드 초기화
   splitDates = (b.splitDates || []).map(sd => ({ ...sd }));
-  const isSplit = b.time === 'split';
+  const isSplit = selectedTime === 'split';
   document.getElementById('bfSplitFields').classList.toggle('hidden', !isSplit);
   if (isSplit) {
     document.querySelectorAll('#bfProgressGroup .seg-btn').forEach(btn => { btn.disabled = btn.dataset.val !== 'counter'; });
@@ -575,6 +596,8 @@ function submitBlockForm() {
   if (!selectedType) { showToast('유형을 선택해주세요'); return; }
   if (!selectedProgress) { showToast('진행 체크 방식을 선택해주세요'); return; }
   // 시간대는 선택 사항 — selectedTime이 null이어도 통과
+  // 절제는 시간대 지정이 불가능한 유형 — UI에서 이미 강제하고 있지만 방어적으로 한 번 더 고정한다.
+  if (selectedType === 'abstain') { selectedTime = 'none'; pendingCustomTimeEntries = []; }
 
   const customTimeEntries = selectedTime === 'custom' ? pendingCustomTimeEntries.slice() : [];
   if (selectedTime === 'custom' && !customTimeEntries.length) {
@@ -746,22 +769,35 @@ function stopActiveTimerForBlock(block, blockId) {
   return elapsedMs;
 }
 
-// 블록의 정렬 그룹 키를 문자열로 반환 (완료여부 + 시간대그룹). 같은 키를 가진 블록들끼리만
-// 수동으로 순서를 바꿀 수 있다 — 그룹이 다르면 자동 정렬 규칙이 항상 우선한다.
+// 블록의 정렬 그룹 키를 문자열로 반환. 절제(abstain) 타입은 시간대와 무관하게
+// 항상 최상단 고정 그룹("abstain")이고, 그 외에는 완료여부+시간대그룹으로 묶인다.
+// 같은 키를 가진 블록들끼리만 수동으로 순서를 바꿀 수 있다 — 그룹이 다르면 자동 정렬 규칙이 항상 우선한다.
 function blockSortGroupKey(b) {
+  if (b.type === 'abstain') return 'abstain';
   const done = (b.progressType !== 'none' && isBlockComplete(b)) ? 1 : 0;
   return `${done}-${timeSlotGroup(b)}`;
+}
+
+// 그룹 키를 정렬 순서가 있는 숫자 배열로 변환해 비교 가능하게 만든다.
+// abstain은 [-1]로 항상 가장 앞, 그 외는 [완료여부, 시간대그룹] 순서.
+function blockSortGroupRank(b) {
+  if (b.type === 'abstain') return [-1, 0];
+  const done = (b.progressType !== 'none' && isBlockComplete(b)) ? 1 : 0;
+  return [done, timeSlotGroup(b)];
+}
+
+function compareBlockGroups(a, b) {
+  const ra = blockSortGroupRank(a), rb = blockSortGroupRank(b);
+  if (ra[0] !== rb[0]) return ra[0] - rb[0];
+  return ra[1] - rb[1];
 }
 
 // 화면에 보이는 순서(렌더링과 동일한 정렬)대로 늘어놓은 블록 배열을 반환.
 function getSortedVisibleBlocks(day) {
   const withIdx = day.blocks.map((b, realIdx) => ({ b, realIdx }));
   withIdx.sort((x, y) => {
-    const xDone = x.b.progressType !== 'none' && isBlockComplete(x.b) ? 1 : 0;
-    const yDone = y.b.progressType !== 'none' && isBlockComplete(y.b) ? 1 : 0;
-    if (xDone !== yDone) return xDone - yDone;
-    const xSlot = timeSlotGroup(x.b), ySlot = timeSlotGroup(y.b);
-    if (xSlot !== ySlot) return xSlot - ySlot;
+    const groupCmp = compareBlockGroups(x.b, y.b);
+    if (groupCmp !== 0) return groupCmp;
     return x.realIdx - y.realIdx;
   });
   return withIdx.map(x => x.b);
@@ -1218,11 +1254,8 @@ function renderBlocks() {
   // 정렬은 표시용으로만 하고 원래 인덱스(realIdx)를 함께 들고 다닌다.
   const withIdx = day.blocks.map((b, realIdx) => ({ b, realIdx }));
   const sorted = withIdx.slice().sort((x, y) => {
-    const xDone = x.b.progressType !== 'none' && isBlockComplete(x.b) ? 1 : 0;
-    const yDone = y.b.progressType !== 'none' && isBlockComplete(y.b) ? 1 : 0;
-    if (xDone !== yDone) return xDone - yDone;
-    const xSlot = timeSlotGroup(x.b), ySlot = timeSlotGroup(y.b);
-    if (xSlot !== ySlot) return xSlot - ySlot;
+    const groupCmp = compareBlockGroups(x.b, y.b);
+    if (groupCmp !== 0) return groupCmp;
     return x.realIdx - y.realIdx; // 같은 그룹 내에서는 원래 순서 유지
   });
 
