@@ -574,6 +574,18 @@ body.reordering .move-btns { display: flex; }
 .split-date-input { flex: 2; border: 1px solid var(--black); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
 .split-count-input { flex: 1; border: 1px solid var(--black); border-radius: 8px; padding: 8px 8px; font-size: 14px; text-align: center; width: 60px; }
 
+/* ===== Custom time entries in block form ===== */
+.custom-time-input-row { display: flex; align-items: center; gap: 6px; }
+.custom-time-input-row input[type="time"] { flex: 1; min-width: 0; border: 1px solid var(--black); border-radius: 8px; padding: 8px 8px; font-size: 14px; }
+.custom-time-input-row .btn-secondary { flex-shrink: 0; padding: 8px 10px; font-size: 12.5px; }
+.custom-time-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.custom-time-chip {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--gray-100); border-radius: 8px; padding: 7px 10px; font-size: 13.5px; font-weight: 500;
+}
+.custom-time-chip button { width: 20px; height: 20px; border: none; background: none; color: var(--gray-400); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; flex-shrink: 0; }
+.custom-time-chip button svg { width: 13px; height: 13px; }
+
 /* ===== Ref item with date column layout ===== */
 .ref-item-col { flex-direction: column; align-items: stretch; gap: 6px; }
 .ref-item-top { display: flex; align-items: center; justify-content: space-between; }

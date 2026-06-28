@@ -196,7 +196,15 @@
         <button class="seg-btn" data-val="custom" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">시간 지정</button>
         <button class="seg-btn" data-val="split" onclick="selectSeg('bfTimeGroup',this); toggleCustomTime(); toggleSplitFields()">쪼개기</button>
       </div>
-      <input type="time" id="bfCustomTime" class="hidden" style="margin-top:8px;">
+      <div class="field hidden" id="bfCustomTimeField" style="margin-top:8px;">
+        <div class="custom-time-input-row">
+          <input type="time" id="bfCustomTimeInput">
+          <button class="btn-secondary" onclick="addCustomTimeEntry('before')">이전</button>
+          <button class="btn-secondary" onclick="addCustomTimeEntry('after')">이후</button>
+          <button class="btn-secondary" onclick="addCustomTimeEntry('exact')">그냥추가</button>
+        </div>
+        <div id="bfCustomTimeList" class="custom-time-list"></div>
+      </div>
     </div>
 
     <div class="field hidden" id="bfSplitFields">

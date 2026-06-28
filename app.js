@@ -1,8 +1,12 @@
 /* =========================================================
    STORAGE SCHEMA
    pc_days        : { "2026-06-17": { blocks:[...], watchBlocks:[...] }, ... }
-     block (할일): { id, name, desc, type, time, customTime, progressType,
+     block (할일): { id, name, desc, type, time, customTimeEntries?, progressType,
        total?, current?, done?, carryover, carryoverId?, sessions? }
+       (customTimeEntries: [{ time:"HH:MM", modifier: 'before'|'after'|'exact' }] —
+        time이 'custom'일 때만 쓰임. before/after가 정확히 1개씩이면 자동으로 시간대
+        범위로 표시되고, 그 외에는 각 항목이 따로 나열된다. 구버전 데이터는 customTime
+        문자열 하나만 있을 수 있으며 이 경우 단일 'exact' 항목으로 취급한다.)
      watchBlock (감상): { id, name, author, type(book/movie/etc), progress(0~100),
        archived: bool, watchChainId: string, memos: [{id,text,time}] }
    pc_carryover_meta  : { <carryoverId>: { stopped: bool } }   // 할일 이행/루틴 체인
@@ -278,6 +282,7 @@ function renderDayHeader() {
    BLOCK FORM
    ========================================================= */
 let selectedType = null, selectedTime = null, selectedProgress = null;
+let pendingCustomTimeEntries = []; // 블록 폼 작성 중 임시로 들고 있는 시간 지정 항목들 [{time, modifier}]
 
 function selectSeg(groupId, btn) {
   const group = document.getElementById(groupId);
@@ -340,7 +345,46 @@ function onTypeChanged() {
 }
 
 function toggleCustomTime() {
-  document.getElementById('bfCustomTime').classList.toggle('hidden', selectedTime !== 'custom');
+  document.getElementById('bfCustomTimeField').classList.toggle('hidden', selectedTime !== 'custom');
+}
+
+/* =========================================================
+   CUSTOM TIME ENTRIES (블록의 "시간 지정" 다중 시각 추가)
+   시간 하나를 고르고 '이전'/'이후'/'그냥추가' 중 하나로 등록한다. 여러 번 추가할 수 있고,
+   '이전'과 '이후'는 자동 시간대 인식이 항상 명확하도록 각각 최대 1개까지만 허용한다.
+   ========================================================= */
+function addCustomTimeEntry(modifier) {
+  const input = document.getElementById('bfCustomTimeInput');
+  const time = input.value;
+  if (!time) { showToast('시간을 먼저 선택해주세요'); return; }
+  if (modifier !== 'exact') {
+    const label = modifier === 'before' ? '이전' : '이후';
+    if (pendingCustomTimeEntries.some(e => e.modifier === modifier)) {
+      showToast(`'${label}'은 한 개만 추가할 수 있어요. 기존 항목을 먼저 지워주세요`);
+      return;
+    }
+  }
+  pendingCustomTimeEntries.push({ time, modifier });
+  renderCustomTimeList();
+}
+
+function removeCustomTimeEntry(idx) {
+  pendingCustomTimeEntries.splice(idx, 1);
+  renderCustomTimeList();
+}
+
+function renderCustomTimeList() {
+  const el = document.getElementById('bfCustomTimeList');
+  if (!pendingCustomTimeEntries.length) { el.innerHTML = ''; return; }
+  const modLabel = { before: '이전', after: '이후', exact: '단일' };
+  el.innerHTML = pendingCustomTimeEntries.map((e, idx) => `
+    <div class="custom-time-chip">
+      <span>${e.time} ${modLabel[e.modifier]}</span>
+      <button onclick="removeCustomTimeEntry(${idx})" aria-label="제거">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  `).join('');
 }
 
 function toggleSplitFields() {
@@ -406,8 +450,10 @@ function openBlockAdd() {
   document.getElementById('bfCurrent').value = '0';
   document.getElementById('bfTotalLabel').textContent = '목표 수';
   document.getElementById('bfTimerLimitMinutes').value = '';
-  document.getElementById('bfCustomTime').value = '';
-  document.getElementById('bfCustomTime').classList.add('hidden');
+  document.getElementById('bfCustomTimeInput').value = '';
+  document.getElementById('bfCustomTimeField').classList.add('hidden');
+  pendingCustomTimeEntries = [];
+  renderCustomTimeList();
   document.getElementById('bfCounterFields').classList.add('hidden');
   document.getElementById('bfTimerLimitFields').classList.add('hidden');
   document.getElementById('bfSplitFields').classList.add('hidden');
@@ -463,9 +509,17 @@ function openBlockEdit(id) {
     totalLabel.textContent = '목표 수';
   }
 
-  const customTimeInput = document.getElementById('bfCustomTime');
-  if (b.time === 'custom') { customTimeInput.classList.remove('hidden'); customTimeInput.value = b.customTime || ''; }
-  else customTimeInput.classList.add('hidden');
+  document.getElementById('bfCustomTimeField').classList.toggle('hidden', b.time !== 'custom');
+  document.getElementById('bfCustomTimeInput').value = '';
+  if (b.customTimeEntries && b.customTimeEntries.length) {
+    pendingCustomTimeEntries = b.customTimeEntries.map(e => ({ ...e }));
+  } else if (b.customTime) {
+    // 구버전 데이터(단일 문자열 시각) — 수정 화면에서는 '단일' 항목 하나로 보여준다
+    pendingCustomTimeEntries = [{ time: b.customTime, modifier: 'exact' }];
+  } else {
+    pendingCustomTimeEntries = [];
+  }
+  renderCustomTimeList();
 
   // 쪼개기 필드 초기화
   splitDates = (b.splitDates || []).map(sd => ({ ...sd }));
@@ -522,7 +576,11 @@ function submitBlockForm() {
   if (!selectedProgress) { showToast('진행 체크 방식을 선택해주세요'); return; }
   // 시간대는 선택 사항 — selectedTime이 null이어도 통과
 
-  const customTime = selectedTime === 'custom' ? document.getElementById('bfCustomTime').value : '';
+  const customTimeEntries = selectedTime === 'custom' ? pendingCustomTimeEntries.slice() : [];
+  if (selectedTime === 'custom' && !customTimeEntries.length) {
+    showToast('추가한 시간이 없어요. 시간을 고르고 이전/이후/그냥추가를 눌러주세요');
+    return;
+  }
   let total = null, current = null, limitMinutes = null;
   if (selectedProgress === 'counter') {
     total = selectedTime === 'split'
@@ -558,7 +616,8 @@ function submitBlockForm() {
   if (editBlockId !== null) {
     const b = day.blocks.find(x => x.id === editBlockId);
     if (b) {
-      b.name = name; b.desc = desc; b.time = selectedTime; b.customTime = customTime;
+      b.name = name; b.desc = desc; b.time = selectedTime; b.customTimeEntries = customTimeEntries;
+      delete b.customTime; // 구버전 단일 문자열 필드는 더 이상 사용하지 않음
       b.progressType = selectedProgress;
       // 루틴 ↔ 비루틴 전환은 막는다 (openBlockEdit에서 버튼 disabled 처리됨)
       b.type = b.type === 'routine' ? 'routine' : selectedType;
@@ -580,7 +639,7 @@ function submitBlockForm() {
   } else {
     const block = {
       id: Date.now() + Math.floor(Math.random()*1000),
-      name, desc, type: selectedType, time: selectedTime, customTime,
+      name, desc, type: selectedType, time: selectedTime, customTimeEntries,
       progressType: selectedProgress, sessions: []
     };
     if (selectedProgress === 'counter') { block.total = total; block.current = current; }
@@ -687,11 +746,49 @@ function stopActiveTimerForBlock(block, blockId) {
   return elapsedMs;
 }
 
-function moveBlock(idx, dir) {
+// 블록의 정렬 그룹 키를 문자열로 반환 (완료여부 + 시간대그룹). 같은 키를 가진 블록들끼리만
+// 수동으로 순서를 바꿀 수 있다 — 그룹이 다르면 자동 정렬 규칙이 항상 우선한다.
+function blockSortGroupKey(b) {
+  const done = (b.progressType !== 'none' && isBlockComplete(b)) ? 1 : 0;
+  return `${done}-${timeSlotGroup(b)}`;
+}
+
+// 화면에 보이는 순서(렌더링과 동일한 정렬)대로 늘어놓은 블록 배열을 반환.
+function getSortedVisibleBlocks(day) {
+  const withIdx = day.blocks.map((b, realIdx) => ({ b, realIdx }));
+  withIdx.sort((x, y) => {
+    const xDone = x.b.progressType !== 'none' && isBlockComplete(x.b) ? 1 : 0;
+    const yDone = y.b.progressType !== 'none' && isBlockComplete(y.b) ? 1 : 0;
+    if (xDone !== yDone) return xDone - yDone;
+    const xSlot = timeSlotGroup(x.b), ySlot = timeSlotGroup(y.b);
+    if (xSlot !== ySlot) return xSlot - ySlot;
+    return x.realIdx - y.realIdx;
+  });
+  return withIdx.map(x => x.b);
+}
+
+function moveBlock(id, dir) {
   const day = ensureDay(viewingDateKey);
-  const target = idx + dir;
-  if (target < 0 || target >= day.blocks.length) return;
-  [day.blocks[idx], day.blocks[target]] = [day.blocks[target], day.blocks[idx]];
+  // 화면에 보이는 순서(자동 정렬 결과) 기준으로 바로 위/아래 칸의 블록을 찾는다.
+  const visible = getSortedVisibleBlocks(day);
+  const visibleIdx = visible.findIndex(b => b.id === id);
+  if (visibleIdx === -1) return;
+  const targetVisibleIdx = visibleIdx + dir;
+  if (targetVisibleIdx < 0 || targetVisibleIdx >= visible.length) return;
+
+  const current = visible[visibleIdx];
+  const target = visible[targetVisibleIdx];
+  // 완료여부/시간대 그룹이 다르면 자동 정렬 규칙을 어기는 이동이므로 조용히 무시한다
+  // (예: 오전 블록을 오후 블록 자리로, 미완료를 완료 영역으로 옮기려는 시도).
+  if (blockSortGroupKey(current) !== blockSortGroupKey(target)) {
+    showToast('다른 시간대/완료 영역으로는 순서를 바꿀 수 없어요');
+    return;
+  }
+
+  // 실제 데이터 배열(day.blocks)에서 두 블록의 위치를 찾아 swap한다.
+  const realA = day.blocks.findIndex(b => b.id === current.id);
+  const realB = day.blocks.findIndex(b => b.id === target.id);
+  [day.blocks[realA], day.blocks[realB]] = [day.blocks[realB], day.blocks[realA]];
   saveDays(); renderBlocks();
 }
 
@@ -846,9 +943,81 @@ function onDragHandlePointerUp(e) {
   }
 }
 
+// 시간 지정 항목들을 화면에 표시할 문자열로 변환.
+// before/after가 정확히 1개씩이면 그 둘을 묶어 "09:00~10:00" 범위로 표시하고,
+// 나머지(단독 before/after, 모든 exact)는 각각 따로 나열한다.
+function formatCustomTimeEntries(entries) {
+  if (!entries || !entries.length) return '';
+  const befores = entries.filter(e => e.modifier === 'before');
+  const afters = entries.filter(e => e.modifier === 'after');
+  const exacts = entries.filter(e => e.modifier === 'exact' || !e.modifier);
+
+  const parts = [];
+  if (befores.length === 1 && afters.length === 1) {
+    // 자동으로 시간대 인식: 이후 시각 ~ 이전 시각
+    parts.push(`${afters[0].time}~${befores[0].time}`);
+  } else {
+    befores.forEach(e => parts.push(`${formatHourLabel(e.time)} 이전`));
+    afters.forEach(e => parts.push(`${formatHourLabel(e.time)} 이후`));
+  }
+  exacts.forEach(e => parts.push(e.time));
+  return parts.join(', ');
+}
+
+// "10:00" → "10시", "10:30" → "10:30" (정시가 아니면 그대로 표시)
+function formatHourLabel(time) {
+  const [h, m] = time.split(':');
+  return m === '00' ? `${parseInt(h)}시` : time;
+}
+
 function timeLabelFor(b) {
-  if (b.time === 'custom' && b.customTime) return b.customTime;
+  if (b.time === 'custom') {
+    if (b.customTimeEntries && b.customTimeEntries.length) return formatCustomTimeEntries(b.customTimeEntries);
+    if (b.customTime) return b.customTime; // 구버전 데이터(단일 문자열) 호환
+  }
   return TIME_LABEL[b.time] || '';
+}
+
+/* =========================================================
+   TIME-SLOT GROUPING (할일 카드 정렬용)
+   각 블록을 오전(0) / 오후(1) / 밤(2) / 시간미지정(3) 네 그룹 중 하나로 분류한다.
+   - morning/afternoon/night 타입은 그 자체로 그룹이 정해진다.
+   - custom(시간 지정) 타입은 등록된 모든 시각(이전/이후/단독 구분 없이) 중
+     가장 빠른 시각을 기준으로, 그 시각이 속한 시간대를 그룹으로 삼는다.
+     경계: 오전 04:00~11:59, 오후 12:00~17:59, 밤 18:00~익일 03:59(자정 걸침).
+   - split/none 등 구체 시각이 없는 나머지는 시간미지정(3)으로 분류한다.
+   ========================================================= */
+const TIME_SLOT_ORDER = { morning: 0, afternoon: 1, night: 2 };
+
+function hourMinuteToSlot(h) {
+  if (h >= 4 && h < 12) return 0;  // 오전
+  if (h >= 12 && h < 18) return 1; // 오후
+  return 2;                         // 밤 (18~23시 또는 0~3시)
+}
+
+function earliestCustomTimeMinutes(b) {
+  let entries = null;
+  if (b.customTimeEntries && b.customTimeEntries.length) entries = b.customTimeEntries;
+  else if (b.customTime) entries = [{ time: b.customTime }];
+  if (!entries || !entries.length) return null;
+  let earliest = null;
+  entries.forEach(e => {
+    const [h, m] = e.time.split(':').map(Number);
+    const mins = h * 60 + m;
+    if (earliest === null || mins < earliest) earliest = mins;
+  });
+  return earliest;
+}
+
+function timeSlotGroup(b) {
+  if (b.time === 'morning' || b.time === 'afternoon' || b.time === 'night') {
+    return TIME_SLOT_ORDER[b.time];
+  }
+  if (b.time === 'custom') {
+    const mins = earliestCustomTimeMinutes(b);
+    if (mins !== null) return hourMinuteToSlot(Math.floor(mins / 60));
+  }
+  return 3; // 시간미지정 (split, none, 또는 custom인데 등록된 시각이 없는 경우)
 }
 
 function blockProgressFraction(b) {
@@ -1041,20 +1210,31 @@ function renderBlocks() {
     </div>`;
     return;
   }
-  // 완료된 블록(진행체크가 있는 것만 해당)은 항상 맨 아래로. 순서 변경 모드의
-  // 위/아래 버튼은 실제 데이터 배열(day.blocks)의 인덱스를 그대로 사용해야 하므로,
+  // 정렬 우선순위: ① 완료 여부(미완료 먼저) ② 시간대 그룹(오전→오후→밤→시간미지정)
+  // ③ 같은 그룹 안에서는 실제 데이터 배열(day.blocks)의 순서를 그대로 따른다 — 새 블록이
+  // 추가될 때 이행→루틴→일반 순으로 적절한 위치에 끼워 넣고, 사용자가 드래그/화살표로
+  // 같은 그룹 안에서 옮기면 그 결과가 배열 순서에 그대로 반영되어 유지된다.
+  // 위/아래 버튼과 드래그는 실제 데이터 배열(day.blocks)의 인덱스를 그대로 사용해야 하므로,
   // 정렬은 표시용으로만 하고 원래 인덱스(realIdx)를 함께 들고 다닌다.
   const withIdx = day.blocks.map((b, realIdx) => ({ b, realIdx }));
   const sorted = withIdx.slice().sort((x, y) => {
     const xDone = x.b.progressType !== 'none' && isBlockComplete(x.b) ? 1 : 0;
     const yDone = y.b.progressType !== 'none' && isBlockComplete(y.b) ? 1 : 0;
     if (xDone !== yDone) return xDone - yDone;
+    const xSlot = timeSlotGroup(x.b), ySlot = timeSlotGroup(y.b);
+    if (xSlot !== ySlot) return xSlot - ySlot;
     return x.realIdx - y.realIdx; // 같은 그룹 내에서는 원래 순서 유지
   });
 
-  el.innerHTML = sorted.map(({ b, realIdx }) => {
-    const idx = realIdx; // moveBlock 등에서 쓰는 실제 배열 인덱스
+  el.innerHTML = sorted.map(({ b, realIdx }, displayIdx) => {
     const complete = isBlockComplete(b);
+    // 화살표 버튼은 같은 정렬 그룹(완료여부+시간대) 안에서만 위/아래로 옮길 수 있다.
+    // 바로 위/아래 카드가 다른 그룹이면 더 이상 옮길 수 없다는 뜻이므로 비활성화한다.
+    const prevB = displayIdx > 0 ? sorted[displayIdx - 1].b : null;
+    const nextB = displayIdx < sorted.length - 1 ? sorted[displayIdx + 1].b : null;
+    const myGroupKey = blockSortGroupKey(b);
+    const canMoveUp = prevB && blockSortGroupKey(prevB) === myGroupKey;
+    const canMoveDown = nextB && blockSortGroupKey(nextB) === myGroupKey;
     let progressHtml = '';
     if (b.progressType === 'counter') {
       const isAbstain = b.type === 'abstain';
@@ -1150,8 +1330,8 @@ function renderBlocks() {
             </button>
           </div>
           <div class="move-btns">
-            <button class="move-btn" onclick="moveBlock(${idx},-1)" ${idx===0?'disabled':''} aria-label="위로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
-            <button class="move-btn" onclick="moveBlock(${idx},1)" ${idx===day.blocks.length-1?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+            <button class="move-btn" onclick="moveBlock(${b.id},-1)" ${!canMoveUp?'disabled':''} aria-label="위로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+            <button class="move-btn" onclick="moveBlock(${b.id},1)" ${!canMoveDown?'disabled':''} aria-label="아래로"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           </div>
         </div>
         ${b.desc ? `<div class="block-desc">${escLinkify(b.desc, 32)}</div>` : ''}
@@ -1162,12 +1342,19 @@ function renderBlocks() {
   }).join('');
 
   // 드래그는 "화면에 보이는 순서(완료 항목이 맨 아래로 정렬된 순서)" 기준으로 동작.
-  // 화살표 버튼과 마찬가지로, 옮긴 결과를 실제 day.blocks 배열에 그 순서대로 다시 써넣는다
-  // (완료 상태가 바뀌지 않았다면 다음 렌더링에서 같은 정렬 결과가 나와 자리가 유지된다).
+  // 화살표 버튼과 마찬가지로 같은 정렬 그룹(완료여부+시간대) 안에서만 허용하고,
+  // 그룹을 넘어가는 이동은 자동 정렬 규칙을 깨므로 조용히 취소(원래 자리로 복귀)한다.
   registerDragReorder('blockList',
     () => sorted.map(x => x.b),
     (fromIdx, toIdx) => {
       const order = sorted.map(x => x.b);
+      const movedBlock = order[fromIdx];
+      const targetBlock = order[toIdx];
+      if (blockSortGroupKey(movedBlock) !== blockSortGroupKey(targetBlock)) {
+        showToast('다른 시간대/완료 영역으로는 순서를 바꿀 수 없어요');
+        renderBlocks(); // 드래그 중 흐트러진 화면을 원래 순서로 되돌림
+        return;
+      }
       const [moved] = order.splice(fromIdx, 1);
       order.splice(toIdx, 0, moved);
       day.blocks = order;
@@ -1860,7 +2047,7 @@ function sendPlanToDate(mode) {
     id: Date.now() + Math.floor(Math.random()*1000),
     name: p.name, desc: p.desc || '', type: p.type === 'unspecified' ? 'todo' : p.type,
     time: p.timeUnspecified ? 'none' : (p.timeStart ? 'custom' : 'none'),
-    customTime: p.timeStart || '',
+    customTimeEntries: p.timeStart ? [{ time: p.timeStart, modifier: 'exact' }] : [],
     progressType: p.progressType, sessions: []
   };
   if (p.progressType === 'counter') { newBlock.total = p.total; newBlock.current = p.current; }
