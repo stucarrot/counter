@@ -45,6 +45,8 @@ button {
   --hm-2: #ab8aea;
   --hm-3: #8660dd;
   --hm-4: #5a32c4;
+
+  --accent-purple: #6650a3;
 }
 
 /* =========================================================
@@ -91,6 +93,8 @@ button {
     --hm-2: #6650a3;
     --hm-3: #8a6fd0;
     --hm-4: #b09aff;
+
+    --accent-purple: #b09aff;
   }
 }
 html.theme-dark {
@@ -129,6 +133,8 @@ html.theme-dark {
   --hm-2: #6650a3;
   --hm-3: #8a6fd0;
   --hm-4: #b09aff;
+
+  --accent-purple: #b09aff;
 }
 html.theme-light { color-scheme: light; }
 html.theme-dark { color-scheme: dark; }
@@ -175,6 +181,25 @@ html, body {
 .page-bar { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
 .page-bar-title { font-size: 13px; font-weight: 600; color: var(--gray-600); text-transform: uppercase; letter-spacing: .5px; }
 .page-bar-actions { display: flex; gap: 8px; }
+
+/* ===== Active timer banner (실행 중인 시간재기 알림 영역) ===== */
+.active-timer-banner { display: flex; flex-direction: column; gap: 6px; padding: 0 16px; margin-top: 4px; }
+.active-timer-banner.hidden { display: none; }
+.active-timer-banner:empty { display: none; }
+.timer-banner-row {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px;
+  font-size: 13.5px; font-weight: 600; color: var(--white);
+}
+.timer-banner-row svg { width: 16px; height: 16px; flex-shrink: 0; }
+.timer-banner-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timer-banner-time { font-variant-numeric: tabular-nums; font-weight: 700; flex-shrink: 0; }
+.timer-banner-tag { font-size: 10.5px; font-weight: 600; background: rgba(255,255,255,0.25); border-radius: 5px; padding: 2px 6px; flex-shrink: 0; }
+
+.timer-banner-focus { background: #2f6fed; cursor: pointer; }
+.timer-banner-focus:active { background: #2a5fd0; }
+.timer-banner-focus.paused { background: #9db8ef; }
+
+.timer-banner-abstain { background: #1a1a1a; cursor: default; }
 
 .subtabs { display: flex; gap: 6px; padding: 10px 16px 0; }
 .subtab-btn {
@@ -317,7 +342,8 @@ html, body {
 .sheet-watch-memo { padding-left: 10px; padding-right: 10px; }
 
 .type-chip { display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; background: rgba(0,0,0,0.08); margin-right: 6px; letter-spacing: .2px; }
-.time-chip { font-size: 11px; color: var(--gray-600); font-weight: 500; }
+.time-chip { font-size: 11px; color: var(--gray-600); font-weight: 500; margin-right: 6px; }
+.watch-finished-date { color: var(--accent-purple); font-weight: 600; }
 .block-desc { font-size: 13px; color: var(--gray-600); margin-top: 6px; line-height: 1.4; }
 .auto-link { color: inherit; text-decoration: underline; text-decoration-color: var(--gray-400); word-break: break-all; }
 .auto-link:active { opacity: 0.6; }
@@ -354,6 +380,35 @@ html, body {
 .watch-flag-row { display: flex; gap: 16px; }
 
 .carryover-chip { font-size: 10.5px; color: var(--gray-600); font-weight: 600; margin-left: 6px; padding: 1px 6px; border-radius: 5px; background: rgba(0,0,0,0.07); }
+
+/* ===== Routine streak badge (연속 완료일수, 단계가 올라갈수록 화려해짐) ===== */
+.streak-badge {
+  font-size: 10.5px; font-weight: 700; margin-left: 6px; padding: 1px 7px; border-radius: 5px;
+  display: inline-block;
+}
+.streak-badge.streak-1 {
+  color: var(--gray-600); background: rgba(0,0,0,0.07);
+}
+.streak-badge.streak-2 {
+  color: #b5651d; background: rgba(181,101,29,0.12);
+}
+.streak-badge.streak-3 {
+  color: #fff; background: linear-gradient(90deg, #f7971e, #ffd200);
+  font-weight: 800;
+}
+.streak-badge.streak-4 {
+  color: #fff; background: linear-gradient(90deg, #ff5f6d, #ffc371);
+  font-weight: 800; box-shadow: 0 1px 6px rgba(255,95,109,0.45);
+}
+.streak-badge.streak-5 {
+  color: #fff; background: linear-gradient(90deg, #ff0080, #ff8c00, #ffd700, #ff0080);
+  background-size: 300% 100%; font-weight: 800; box-shadow: 0 1px 8px rgba(255,0,128,0.5);
+  animation: streak-shimmer 2.5s linear infinite;
+}
+@keyframes streak-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
 
 .timer-icon-btn { width: 30px; height: 30px; border: 1px solid var(--black); border-radius: 7px; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .timer-icon-btn:active { background: rgba(0,0,0,0.06); }
@@ -417,9 +472,12 @@ html, body {
 
 .memo-pin-btn { font-size: 10.5px; color: var(--gray-600); background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
 .memo-pin-btn.pinned { color: var(--black); font-weight: 700; }
+.memo-archive-btn { font-size: 10.5px; color: var(--gray-600); background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
+.memo-archive-btn.archived { color: var(--accent-purple); font-weight: 700; }
 .memo-bubble { background: var(--gray-100); border-radius: 16px; padding: 10px 14px; max-width: 88%; align-self: flex-start; }
 .memo-text { font-size: 14.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
-.memo-meta-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+.memo-archived-icon { width: 12px; height: 12px; flex-shrink: 0; color: var(--accent-purple); vertical-align: -1px; margin-right: 4px; }
+.memo-meta-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
 .memo-time { font-size: 10.5px; color: var(--gray-400); }
 .memo-copy-btn { font-size: 10.5px; color: var(--gray-600); background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
 .memo-delete-btn { font-size: 10.5px; color: #e05c5c; background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
@@ -435,6 +493,31 @@ html, body {
 .memo-send-btn { width: 38px; height: 38px; border-radius: 50%; background: var(--black); color: var(--white); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .memo-send-btn:active { opacity: .8; }
 .memo-send-btn svg { width: 17px; height: 17px; }
+
+/* ===== Memo archive (보관함) ===== */
+#page-memo { position: relative; }
+.memo-archive-fab {
+  position: absolute; right: 14px; bottom: calc(64px + var(--safe-bottom));
+  width: 34px; height: 34px; border-radius: 50%; background: var(--white); color: var(--black);
+  border: 1px solid var(--gray-300); cursor: pointer; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12); z-index: 5;
+}
+.memo-archive-fab:active { background: var(--gray-100); }
+.memo-archive-fab svg { width: 17px; height: 17px; }
+
+.sheet-memo-archive { display: flex; flex-direction: column; max-height: 82vh; }
+.memo-archive-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-shrink: 0; }
+.memo-archive-toolbar input {
+  flex: 1; border: 1px solid var(--gray-300); border-radius: 9px; padding: 9px 12px;
+  font-size: 14px; background: var(--white); color: var(--black);
+}
+.memo-archive-toolbar input:focus { outline: none; border-color: var(--black); }
+.memo-archive-sort-btn {
+  font-size: 12.5px; font-weight: 600; color: var(--black); background: var(--gray-100);
+  border: none; border-radius: 9px; padding: 9px 12px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
+}
+.memo-archive-sort-btn:active { background: var(--gray-200); }
+.memo-archive-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
 
 /* drag/reorder */
 .reorder-handle { display: none; width: 30px; height: 30px; border: none; background: none; cursor: grab; align-items: center; justify-content: center; color: var(--gray-600); flex-shrink: 0; touch-action: none; }

@@ -1201,6 +1201,82 @@ function renderSessionLog(b) {
 /* =========================================================
    HEATMAP (루틴 전용 — 최근 N일 완료율)
    ========================================================= */
+/* =========================================================
+   ACTIVE TIMER BANNER
+   할일/절제 시간재기가 실행 중이면 블록 목록 위 알림 영역에 별도로 떠서, 어느 블록을
+   보고 있든 한눈에 진행 상황을 볼 수 있게 한다. 일시정지(보조 타이머만 가능)는 옅은 색으로
+   계속 떠 있고, 완전히 멈추면(정지) 그 즉시 영역에서 사라진다. 보조 타이머 알림은 탭하면
+   해당 타이머 시트를 다시 열어주고, 절제 알림은 탭해도 동작이 없다(팝업 자체가 없음).
+   ========================================================= */
+function renderActiveTimerBanner() {
+  const el = document.getElementById('activeTimerBanner');
+  if (!el) return;
+  const rows = [];
+
+  if (activeTimer) {
+    const found = findBlockById(activeTimer.blockId);
+    const name = found ? found.block.name : '집중 타이머';
+    rows.push(`<div class="timer-banner-row timer-banner-focus ${activeTimer.paused ? 'paused' : ''}" data-banner="focus" onclick="openTimerSheet(${activeTimer.blockId})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg>
+      <span class="timer-banner-name">${esc(name)}</span>
+      <span class="timer-banner-time" data-banner-time="focus">${formatHMS(currentElapsedMs())}</span>
+      ${activeTimer.paused ? '<span class="timer-banner-tag">일시정지</span>' : ''}
+    </div>`);
+  }
+
+  Object.keys(activeAbstainTimers).forEach(blockIdStr => {
+    const blockId = parseInt(blockIdStr);
+    const found = findBlockById(blockId);
+    const name = found ? found.block.name : '절제';
+    rows.push(`<div class="timer-banner-row timer-banner-abstain" data-banner="abstain-${blockId}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg>
+      <span class="timer-banner-name">${esc(name)}</span>
+      <span class="timer-banner-time" data-banner-time="abstain-${blockId}">${formatHMS(found ? abstainTimerTotalMs(found.block) : 0)}</span>
+    </div>`);
+  });
+
+  el.innerHTML = rows.join('');
+  el.classList.toggle('hidden', rows.length === 0);
+}
+
+// 연속 완료일수를 단계별로 점점 화려하게 보여주는 배지.
+// 0일이면 아예 표시하지 않고, 1일부터는 기본 칩, 3/7/14/30일 구간마다 더 화려해진다.
+function renderStreakBadge(streak) {
+  if (!streak || streak <= 0) return '';
+  let tier = 'streak-1';
+  if (streak >= 30) tier = 'streak-5';
+  else if (streak >= 14) tier = 'streak-4';
+  else if (streak >= 7) tier = 'streak-3';
+  else if (streak >= 3) tier = 'streak-2';
+  return `<span class="streak-badge ${tier}">🔥 ${streak}일 연속</span>`;
+}
+
+// 루틴의 연속 완료일수(streak)를 계산. 항상 "어제"부터 거슬러 올라가며 세므로
+// 오늘이 아직 미완료여도 어제까지 쌓아온 연속 기록은 그대로 보여준다.
+// "매 n일마다" 루틴이면 쉬는 날은 건너뛰고(연속이 끊기지 않음), 활성 날인데 완료가
+// 아니면 그 자리에서 streak가 끊긴다. 최대 365일까지만 거슬러 올라간다(무한루프 방지).
+// 그날 데이터 자체가 없으면(쉬는 날이거나 그 루틴이 아직 시작되기 전) 일단 건너뛰고 계속
+// 거슬러 올라가되, 연속으로 60일 넘게 데이터가 없으면 그 이전엔 루틴이 없었다고 보고 멈춘다.
+function getRoutineStreak(carryoverId) {
+  const todayKey = TODAY_KEY();
+  let streak = 0;
+  let consecutiveMissing = 0;
+  for (let i = 1; i <= 365; i++) {
+    const k = addDaysToKey(todayKey, -i);
+    const dayObj = days[k];
+    const b = dayObj && dayObj.blocks.find(x => x.carryoverId === carryoverId);
+    if (!b) {
+      consecutiveMissing++;
+      if (consecutiveMissing > 60) break;
+      continue;
+    }
+    consecutiveMissing = 0;
+    if (isBlockComplete(b)) { streak++; continue; }
+    break; // 활성 날에 완료가 안 되어 있으면 연속이 끊김
+  }
+  return streak;
+}
+
 function getCarryoverHeatmap(carryoverId, days_count) {
   const todayKey = TODAY_KEY();
   const result = [];
@@ -1237,6 +1313,7 @@ function renderHeatmap(carryoverId) {
    RENDER BLOCKS
    ========================================================= */
 function renderBlocks() {
+  renderActiveTimerBanner();
   const day = ensureDay(viewingDateKey);
   const el = document.getElementById('blockList');
   if (!day.blocks.length) {
@@ -1334,6 +1411,7 @@ function renderBlocks() {
     const timeStr = timeLabelFor(b);
     const carryoverBadge = (b.carryover && b.type !== 'routine' && b.type !== 'abstain') ? `<span class="carryover-chip">이행</span>` : '';
     const intervalBadge = (b.type === 'routine' && b.intervalDays > 1) ? `<span class="carryover-chip">매 ${b.intervalDays}일마다</span>` : '';
+    const streakHtml = (b.type === 'routine') ? renderStreakBadge(getRoutineStreak(b.carryoverId)) : '';
     const hasTime = blockTotalFocusMs(b) > 0 || (activeTimer && activeTimer.blockId === b.id);
     const isTimerActive = activeTimer && activeTimer.blockId === b.id && activeTimer.dateKey === viewingDateKey;
     const isAbstainTimerActive = !!activeAbstainTimers[b.id];
@@ -1345,7 +1423,7 @@ function renderBlocks() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(b.name)}${isTimerActive || isAbstainTimerActive ? ' ⏱' : ''}</div>
-            <div class="card-sub"><span class="type-chip">${TYPE_LABEL[b.type]}</span>${timeStr ? `<span class="time-chip">${timeStr}</span>` : ''}${carryoverBadge}${intervalBadge}</div>
+            <div class="card-sub"><span class="type-chip">${TYPE_LABEL[b.type]}</span>${timeStr ? `<span class="time-chip">${timeStr}</span>` : ''}${carryoverBadge}${intervalBadge}${streakHtml}</div>
             ${b.type === 'routine' ? renderHeatmap(b.carryoverId) : ''}
           </div>
           <div class="card-btns">
@@ -1504,19 +1582,25 @@ function timerTick() {
     if (document.getElementById('timerOverlay').classList.contains('open') && isTimerRunningForCurrentBlock()) {
       updateTimerDisplay();
     }
+    const bannerEl = document.querySelector('[data-banner-time="focus"]');
+    if (bannerEl) bannerEl.textContent = formatHMS(currentElapsedMs());
   }
   // 실행 중인 절제 시간재기들의 카드 표시를 1초마다 가볍게 갱신 (전체 리렌더 없이 텍스트만)
   let crossedLimitJustNow = false;
   Object.keys(activeAbstainTimers).forEach(blockIdStr => {
+    const blockId = parseInt(blockIdStr);
     const el = document.querySelector(`.card[data-id="${blockIdStr}"] .abstain-timer-display`);
-    if (el) {
-      const found = findBlockById(parseInt(blockIdStr));
-      if (found) {
+    const bannerTimeEl = document.querySelector(`[data-banner-time="abstain-${blockId}"]`);
+    const found = findBlockById(blockId);
+    if (found) {
+      const totalMs = abstainTimerTotalMs(found.block);
+      if (el) {
         const wasOver = el.dataset.over === '1';
         const isOver = isAbstainOverLimit(found.block);
-        el.textContent = formatDurationShort(abstainTimerTotalMs(found.block));
+        el.textContent = formatDurationShort(totalMs);
         if (isOver !== wasOver) { el.dataset.over = isOver ? '1' : '0'; crossedLimitJustNow = true; }
       }
+      if (bannerTimeEl) bannerTimeEl.textContent = formatHMS(totalMs);
     }
   });
   // 상한을 막 넘긴 시점이면 점수 표시와 카드의 초과 배지를 갱신 (가벼운 부분 갱신 대신 안전하게 전체 리렌더)
@@ -1578,6 +1662,7 @@ function timerPause() {
   activeTimer.startedAt = new Date().toISOString(); // 재개 시 기준점 갱신용
   saveActiveTimer();
   renderTimerSheet();
+  renderActiveTimerBanner();
 }
 
 function timerResume() {
@@ -1586,6 +1671,7 @@ function timerResume() {
   activeTimer.paused = false;
   saveActiveTimer();
   renderTimerSheet();
+  renderActiveTimerBanner();
 }
 
 function timerStop() {
@@ -3079,7 +3165,7 @@ function renderWatchArchiveTab() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(item.name)}</div>
-            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}<span class="time-chip">${formatArchiveDateLabel(item.finishedDate)}</span>${item.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}<span class="time-chip watch-finished-date">${formatArchiveDateLabel(item.finishedDate)}</span>${item.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
           </div>
           <div class="card-btns">
             <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchArchiveMemo('archive',${item.id})" aria-label="감상 메모">
@@ -3501,8 +3587,8 @@ function sendMemo() {
   renderMemos();
 }
 
-function copyMemo(id) {
-  const list = memos[viewingMemoDateKey] || [];
+function copyMemo(id, dateKey) {
+  const list = memos[dateKey || viewingMemoDateKey] || [];
   const m = list.find(x => x.id === id);
   if (!m) return;
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -3530,6 +3616,82 @@ function deleteMemo(id) {
    원본 메모가 삭제되면 고정 목록에서도 자동으로 빠진다.
    ========================================================= */
 const MAX_PINNED_MEMOS = 3;
+
+// 메모 보관/해제. pinnedMemos처럼 별도 목록을 두지 않고 메모 객체 자체에 플래그만 남겨서,
+// 원본 위치(그 날짜의 메모 목록)에는 그대로 있고 작은 보관 아이콘만 붙는다.
+function toggleMemoArchive(memoId, dateKey) {
+  const list = memos[dateKey];
+  if (!list) return;
+  const m = list.find(x => x.id === memoId);
+  if (!m) return;
+  m.archived = !m.archived;
+  saveMemos();
+  renderMemos();
+  if (document.getElementById('memoArchiveOverlay').classList.contains('open')) renderMemoArchiveList();
+}
+
+/* =========================================================
+   MEMO ARCHIVE (메모 보관함)
+   날짜와 무관하게 archived:true인 메모를 모두 모아 보여주는 별도 화면.
+   원본은 그 날짜의 메모 목록에 그대로 남아있고(이동이 아니라 표시만), 여기서도
+   바로 보관 해제할 수 있다. 최신/오래된순 정렬과 텍스트 검색을 지원한다.
+   ========================================================= */
+let memoArchiveSortDesc = true; // true: 최신순, false: 오래된순
+
+function openMemoArchive() {
+  document.getElementById('memoArchiveSearch').value = '';
+  memoArchiveSortDesc = true;
+  document.getElementById('memoArchiveSortBtn').textContent = '최신순';
+  renderMemoArchiveList();
+  document.getElementById('memoArchiveOverlay').classList.add('open');
+}
+
+function toggleMemoArchiveSort() {
+  memoArchiveSortDesc = !memoArchiveSortDesc;
+  document.getElementById('memoArchiveSortBtn').textContent = memoArchiveSortDesc ? '최신순' : '오래된순';
+  renderMemoArchiveList();
+}
+
+function getAllArchivedMemos() {
+  const result = [];
+  Object.keys(memos).forEach(dateKey => {
+    (memos[dateKey] || []).forEach(m => {
+      if (m.archived) result.push({ memo: m, dateKey });
+    });
+  });
+  return result;
+}
+
+function renderMemoArchiveList() {
+  const el = document.getElementById('memoArchiveList');
+  const query = document.getElementById('memoArchiveSearch').value.trim().toLowerCase();
+
+  let items = getAllArchivedMemos();
+  if (query) items = items.filter(x => x.memo.text.toLowerCase().includes(query));
+  items.sort((a, b) => {
+    const ta = new Date(a.memo.time).getTime(), tb = new Date(b.memo.time).getTime();
+    return memoArchiveSortDesc ? tb - ta : ta - tb;
+  });
+
+  if (!items.length) {
+    el.innerHTML = `<div class="memo-empty">${query ? '검색 결과가 없어요' : '보관한 메모가 없어요'}</div>`;
+    return;
+  }
+
+  el.innerHTML = items.map(({ memo: m, dateKey }) => {
+    const t = new Date(m.time);
+    const dateStr = `${t.getFullYear()}.${String(t.getMonth()+1).padStart(2,'0')}.${String(t.getDate()).padStart(2,'0')}`;
+    const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+    return `<div class="memo-bubble">
+      <div class="memo-text">${escLinkify(m.text, 40)}</div>
+      <div class="memo-meta-row">
+        <span class="memo-time">${dateStr} ${timeStr}</span>
+        <button class="memo-archive-btn archived" onclick="toggleMemoArchive(${m.id},'${dateKey}')">보관 해제</button>
+        <button class="memo-copy-btn" onclick="copyMemo(${m.id},'${dateKey}')">복사</button>
+      </div>
+    </div>`;
+  }).join('');
+}
 
 function toggleMemoPin(memoId, dateKey) {
   const idx = pinnedMemos.findIndex(p => p.memoId === memoId && p.dateKey === dateKey);
@@ -3589,11 +3751,15 @@ function renderMemos() {
     const t = new Date(m.time);
     const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
     const isPinned = pinnedMemos.some(p => p.memoId === m.id && p.dateKey === viewingMemoDateKey);
+    const archiveIcon = m.archived
+      ? `<svg class="memo-archived-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`
+      : '';
     return `<div class="memo-bubble">
-      <div class="memo-text">${escLinkify(m.text, 40)}</div>
+      <div class="memo-text">${archiveIcon}${escLinkify(m.text, 40)}</div>
       <div class="memo-meta-row">
         <span class="memo-time">${timeStr}</span>
         <button class="memo-pin-btn ${isPinned ? 'pinned' : ''}" onclick="toggleMemoPin(${m.id},'${viewingMemoDateKey}')">${isPinned ? '고정됨' : '고정'}</button>
+        <button class="memo-archive-btn ${m.archived ? 'archived' : ''}" onclick="toggleMemoArchive(${m.id},'${viewingMemoDateKey}')">${m.archived ? '보관됨' : '보관'}</button>
         <button class="memo-copy-btn" onclick="copyMemo(${m.id})">복사</button>
         <button class="memo-delete-btn" onclick="deleteMemo(${m.id})">삭제</button>
       </div>

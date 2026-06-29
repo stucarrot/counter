@@ -72,6 +72,7 @@
         </button>
       </div>
     </div>
+    <div id="activeTimerBanner" class="active-timer-banner"></div>
     <div id="blockList" class="list"></div>
   </div>
 
@@ -137,6 +138,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
     </div>
+    <button class="memo-archive-fab" onclick="openMemoArchive()" aria-label="메모 보관함">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+    </button>
   </div>
 
   <!-- ============ GAME PAGE ============ -->
@@ -404,6 +408,22 @@
     </div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('watchMemoOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MEMO ARCHIVE SHEET ============ -->
+<div class="overlay" id="memoArchiveOverlay" onclick="overlayClose(event,'memoArchiveOverlay')">
+  <div class="sheet sheet-tall sheet-memo-archive">
+    <div class="sheet-handle"></div>
+    <h2>메모 보관함</h2>
+    <div class="memo-archive-toolbar">
+      <input type="text" id="memoArchiveSearch" placeholder="보관한 메모 검색" autocomplete="off" oninput="renderMemoArchiveList()">
+      <button class="memo-archive-sort-btn" id="memoArchiveSortBtn" onclick="toggleMemoArchiveSort()">최신순</button>
+    </div>
+    <div id="memoArchiveList" class="memo-list memo-archive-list"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('memoArchiveOverlay')">닫기</button>
     </div>
   </div>
 </div>
