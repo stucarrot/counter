@@ -15,7 +15,9 @@
    pc_active_timer: { dateKey, blockId, startedAt(ISOString), accumulatedMs, paused: bool } | null
    pc_plan_blocks : [ planBlock, ... ]   // 계획 탭 — 날짜에 속하지 않는 전역 목록
      planBlock: { id, name, desc, type, progressType, total?, current?, done?,
-       timeUnspecified: bool, dateStart?, dateEnd?, timeStart?, timeEnd?, order }
+       timeUnspecified: bool, customDateEntries?: [{date, modifier(before/after/exact)}], timeStart?, timeEnd?, order }
+       // customDateEntries는 할일 블록의 "시간 지정"과 같은 방식 — before/after가 1개씩이면 자동으로
+       // 하나의 기간(이후~이전)으로 인식되고, 그 외엔 각각 개별 날짜로 표시된다.
    pc_period_plans: [ periodPlan, ... ]  // 기간계획 블록
      periodPlan: { id, mode(month/week/range), dateStart, dateEnd, desc,
        refs: [{ kind: 'plan'|'todo', id, dateKey? }], order }
@@ -70,6 +72,7 @@ let deleteBlockId = null;
 let postponeBlockId = null;
 let deferredPrompt = null;
 let reordering = false;
+let simpleView = localStorage.getItem('pc_simple_view') === '1'; // 간단 보기(2열 압축) 모드
 let currentTab = 'todo';
 let timerBlockId = null; // 타이머 시트가 현재 가리키는 블록
 let timerTickHandle = null;
@@ -89,8 +92,11 @@ let currentWatchSubtab = 'ongoing'; // 'ongoing' | 'planned' | 'archive' | 'list
 let editWatchListId = null;
 let deleteWatchListId = null;
 let pendingWatchListRefs = []; // 감상 목록 폼 작성 중 임시로 들고 있는 참조 목록
+let creatingWatchForList = false; // 감상 목록 폼 안에서 "새 감상 만들고 참조하기"로 감상 폼을 띄운 상태인지
+let searchScope = 'all'; // 'all' | 'plan' | 'todo' | 'watch' — 블록 검색 시트의 현재 범위
 let editPeriodId = null;
 let selectedPeriodMode = null;
+let pendingPlanDateEntries = []; // 계획 폼 작성 중 임시로 들고 있는 날짜 항목들 [{date, modifier}] (할일 블록의 시간 지정과 동일한 방식)
 let pendingPeriodRefs = []; // 기간계획 폼 작성 중 임시로 들고 있는 참조 목록
 let creatingPlanForPeriod = false; // 기간계획 폼 안에서 "새 계획 만들고 참조하기"로 계획 폼을 띄운 상태인지
 let importPlanId = null;
@@ -215,6 +221,7 @@ function switchTab(tab) {
     document.getElementById(`page-${t}`).classList.toggle('hidden', tab !== t);
   });
   updateReorderButtonVisibility();
+  updateSimpleViewGrid();
   if (tab === 'memo') {
     renderMemoHeader();
     renderPinnedMemos();
@@ -240,6 +247,52 @@ function toggleReorder() {
 }
 
 /* =========================================================
+   SIMPLE VIEW (간단 보기)
+   기간계획을 제외한, 블록 카드를 쓰는 모든 목록(할일/계획-시간순·미지정/감상 전체 서브탭)에
+   적용 가능한 2열 압축 보기. 목록 컨테이너에 'grid-2col' 클래스를 붙이면 CSS가 2열 그리드로
+   바꾸고 부가 버튼/상태를 숨긴다 — 숨겨지는 요소는 실제로 삭제되는 게 아니라 CSS로만 가려지므로,
+   카드를 탭하면 그 카드의 DOM을 그대로 복제해 상세 오버레이에 넣어 전체 모습을 보여줄 수 있다.
+   ========================================================= */
+function toggleSimpleView() {
+  simpleView = !simpleView;
+  localStorage.setItem('pc_simple_view', simpleView ? '1' : '0');
+  document.getElementById('simpleViewToggle').setAttribute('aria-pressed', simpleView ? 'true' : 'false');
+  document.getElementById('simpleViewToggle').classList.toggle('active', simpleView);
+  if (simpleView && reordering) toggleReorder(); // 압축 보기에서는 순서변경 손잡이가 가려지므로 같이 꺼준다
+  updateSimpleViewGrid();
+}
+
+function updateSimpleViewGrid() {
+  const blockListEl = document.getElementById('blockList');
+  if (blockListEl) blockListEl.classList.toggle('grid-2col', simpleView);
+
+  // 계획 탭은 '기간계획' 서브탭일 때만 예외 — 그 카드는 압축 대상에서 제외한다.
+  const planListEl = document.getElementById('planList');
+  if (planListEl) planListEl.classList.toggle('grid-2col', simpleView && currentPlanSubtab !== 'period');
+
+  const watchListEl = document.getElementById('watchList');
+  if (watchListEl) watchListEl.classList.toggle('grid-2col', simpleView);
+}
+
+// 압축 모드에서 카드의 "빈 영역"(버튼/입력 요소가 아닌 곳)을 탭하면 상세 오버레이를 띄운다.
+// 카드 자체에 실제 기능이 있는 요소(버튼/체크박스/입력창 등)를 눌렀을 때는 그 요소의 동작만
+// 실행되고 오버레이는 뜨지 않는다.
+function handleCardTap(e, cardEl) {
+  if (!cardEl.closest('.grid-2col')) return; // 압축 보기가 아니면(기간계획 등) 평소처럼 아무 동작 없음
+  if (e.target.closest('button, input, label, a')) return;
+  openCardDetail(cardEl);
+}
+
+function openCardDetail(cardEl) {
+  const body = document.getElementById('cardDetailBody');
+  body.innerHTML = '';
+  const clone = cardEl.cloneNode(true);
+  clone.removeAttribute('onclick'); // 오버레이 안에서는 다시 압축 판정을 하지 않아도 되므로 제거
+  body.appendChild(clone);
+  document.getElementById('cardDetailOverlay').classList.add('open');
+}
+
+/* =========================================================
    GENERIC OVERLAY HELPERS
    ========================================================= */
 function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
@@ -247,7 +300,8 @@ function overlayClose(e, id) { if (e.target === document.getElementById(id)) clo
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay'].forEach(closeOverlay);
+    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay','searchOverlay','cardDetailOverlay'].forEach(closeOverlay);
+    closeMemoArchive();
   }
 });
 
@@ -282,6 +336,8 @@ function renderDayHeader() {
    BLOCK FORM
    ========================================================= */
 let selectedType = null, selectedTime = null, selectedProgress = null;
+let selectedBlockColor = null; // 블록 폼에서 고른 커스텀 색(hex) — null이면 유형 기본색 사용
+const BLOCK_COLOR_PRESETS = ['#e0575c','#f0973f','#f0c93f','#5cb85c','#3fb6a8','#4a90e2','#8a6de0','#e05fc0','#8d8d93'];
 let pendingCustomTimeEntries = []; // 블록 폼 작성 중 임시로 들고 있는 시간 지정 항목들 [{time, modifier}]
 
 function selectSeg(groupId, btn) {
@@ -330,6 +386,9 @@ function onTypeChanged() {
   } else {
     timeField.classList.remove('hidden');
   }
+
+  // 절제는 항상 반전(검정 배경) 배색이 고정이라 색상 지정 필드는 의미가 없어 숨긴다.
+  document.getElementById('bfColorField').classList.toggle('hidden', selectedType === 'abstain');
 
   const timerBtn = document.getElementById('bfProgressTimerBtn');
   const toggleBtn = document.querySelector('#bfProgressGroup .seg-btn[data-val="toggle"]');
@@ -399,6 +458,72 @@ function renderCustomTimeList() {
       </button>
     </div>
   `).join('');
+}
+
+/* =========================================================
+   PLAN BLOCK DATE ENTRIES (계획 블록의 "날짜" 다중 항목 추가)
+   할일 블록의 "시간 지정"과 완전히 같은 방식 — 날짜 하나를 고르고 '이전'/'이후'/'그냥추가' 중
+   하나로 등록한다. '이전'과 '이후'가 각각 정확히 1개씩이면 자동으로 하나의 기간(이후~이전)으로
+   인식되고, 그 외의 경우(단독 이전/이후, 여러 개의 그냥추가)는 각각 따로 표시된다.
+   ========================================================= */
+function addPlanDateEntry(modifier) {
+  const input = document.getElementById('pfDateInput');
+  const date = input.value;
+  if (!date) { showToast('날짜를 먼저 선택해주세요'); return; }
+  if (modifier !== 'exact') {
+    const label = modifier === 'before' ? '이전' : '이후';
+    if (pendingPlanDateEntries.some(e => e.modifier === modifier)) {
+      showToast(`'${label}'은 한 개만 추가할 수 있어요. 기존 항목을 먼저 지워주세요`);
+      return;
+    }
+  }
+  pendingPlanDateEntries.push({ date, modifier });
+  renderPlanDateList();
+}
+
+function removePlanDateEntry(idx) {
+  pendingPlanDateEntries.splice(idx, 1);
+  renderPlanDateList();
+}
+
+function renderPlanDateList() {
+  const el = document.getElementById('pfDateList');
+  if (!pendingPlanDateEntries.length) { el.innerHTML = ''; return; }
+  const modLabel = { before: '이전', after: '이후', exact: '단일' };
+  el.innerHTML = pendingPlanDateEntries.map((e, idx) => `
+    <div class="custom-time-chip">
+      <span>${e.date} ${modLabel[e.modifier]}</span>
+      <button onclick="removePlanDateEntry(${idx})" aria-label="제거">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  `).join('');
+}
+
+// 날짜 항목들을 화면에 표시할 문자열로 변환 (formatCustomTimeEntries와 동일한 규칙).
+// before/after가 정확히 1개씩이면 그 둘을 묶어 "07.01~07.10" 기간으로 표시하고,
+// 나머지(단독 before/after, 모든 exact)는 각각 따로 나열한다.
+function formatPlanDateEntries(entries) {
+  if (!entries || !entries.length) return '';
+  const befores = entries.filter(e => e.modifier === 'before');
+  const afters = entries.filter(e => e.modifier === 'after');
+  const exacts = entries.filter(e => e.modifier === 'exact' || !e.modifier);
+
+  const parts = [];
+  if (befores.length === 1 && afters.length === 1) {
+    parts.push(`${afters[0].date} ~ ${befores[0].date}`);
+  } else {
+    befores.forEach(e => parts.push(`${e.date} 이전`));
+    afters.forEach(e => parts.push(`${e.date} 이후`));
+  }
+  exacts.forEach(e => parts.push(e.date));
+  return parts.join(', ');
+}
+
+// 정렬/그룹핑에 쓸 대표 날짜 — 등록된 날짜 중 가장 빠른 날짜(이전/이후/단일 구분 없이).
+function earliestPlanDate(entries) {
+  if (!entries || !entries.length) return '';
+  return entries.map(e => e.date).sort()[0];
 }
 
 function toggleSplitFields() {
@@ -479,6 +604,7 @@ function openBlockAdd() {
   document.querySelector('#bfProgressGroup .seg-btn[data-val="toggle"]').classList.remove('hidden');
   document.querySelector('#bfProgressGroup .seg-btn[data-val="none"]').classList.remove('hidden');
   selectedType = null; selectedTime = 'none'; selectedProgress = null;
+  selectBlockColor('');
   splitDates = [];
   renderSplitDateRows();
   document.querySelectorAll('#bfTypeGroup .seg-btn, #bfTimeGroup .seg-btn, #bfProgressGroup .seg-btn').forEach(b => b.classList.remove('selected'));
@@ -500,6 +626,7 @@ function openBlockEdit(id) {
   // 절제는 시간대 지정이 불가능한 유형이라, 과거에 시간이 지정되어 있던 데이터라도
   // 수정 화면에서는 항상 '미지정'으로 강제해서 보여준다 (저장하면 그대로 정리됨).
   selectedType = b.type; selectedTime = (b.type === 'abstain') ? 'none' : (b.time || 'none'); selectedProgress = b.progressType;
+  selectBlockColor(b.color || '');
 
   document.querySelectorAll('#bfTypeGroup .seg-btn').forEach(btn => {
     btn.classList.toggle('selected', btn.dataset.val === b.type);
@@ -642,6 +769,7 @@ function submitBlockForm() {
       b.name = name; b.desc = desc; b.time = selectedTime; b.customTimeEntries = customTimeEntries;
       delete b.customTime; // 구버전 단일 문자열 필드는 더 이상 사용하지 않음
       b.progressType = selectedProgress;
+      if (selectedBlockColor) b.color = selectedBlockColor; else delete b.color;
       // 루틴 ↔ 비루틴 전환은 막는다 (openBlockEdit에서 버튼 disabled 처리됨)
       b.type = b.type === 'routine' ? 'routine' : selectedType;
 
@@ -665,6 +793,7 @@ function submitBlockForm() {
       name, desc, type: selectedType, time: selectedTime, customTimeEntries,
       progressType: selectedProgress, sessions: []
     };
+    if (selectedBlockColor) block.color = selectedBlockColor;
     if (selectedProgress === 'counter') { block.total = total; block.current = current; }
     if (selectedProgress === 'toggle') { block.done = false; }
     if (selectedProgress === 'timer') { block.limitMinutes = limitMinutes; block.abstainSessions = []; }
@@ -1415,7 +1544,7 @@ function renderBlocks() {
     const hasTime = blockTotalFocusMs(b) > 0 || (activeTimer && activeTimer.blockId === b.id);
     const isTimerActive = activeTimer && activeTimer.blockId === b.id && activeTimer.dateKey === viewingDateKey;
     const isAbstainTimerActive = !!activeAbstainTimers[b.id];
-    return `<div class="card block-card type-${b.type} ${complete && b.progressType!=='none' ? 'completed':''}" data-id="${b.id}">
+    return `<div class="card block-card type-${b.type} ${complete && b.progressType!=='none' ? 'completed':''}" data-id="${b.id}" style="${blockColorStyle(b.color, b.type)}" onclick="handleCardTap(event,this)">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -1776,6 +1905,7 @@ function switchPlanSubtab(sub) {
   document.getElementById('periodAddBtn').classList.toggle('hidden', sub !== 'period');
   document.getElementById('planAddBtn').classList.toggle('hidden', sub === 'period');
   if (reordering) toggleReorder(); // 서브탭을 바꾸면 순서모드는 헷갈리니 끈다
+  updateSimpleViewGrid();
   renderPlanList();
 }
 
@@ -1862,8 +1992,9 @@ function openPlanAdd() {
   document.getElementById('pfDesc').value = '';
   document.getElementById('pfTotal').value = '';
   document.getElementById('pfCurrent').value = '0';
-  document.getElementById('pfDateStart').value = '';
-  document.getElementById('pfDateEnd').value = '';
+  document.getElementById('pfDateInput').value = '';
+  pendingPlanDateEntries = [];
+  renderPlanDateList();
   document.getElementById('pfTimeStart').value = '';
   document.getElementById('pfTimeEnd').value = '';
   document.getElementById('pfCounterFields').classList.add('hidden');
@@ -1892,8 +2023,18 @@ function openPlanEdit(id) {
   document.querySelectorAll('#pfProgressGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === p.progressType));
 
   document.getElementById('pfTimeFields').classList.toggle('hidden', selectedPlanTimeMode !== 'specified');
-  document.getElementById('pfDateStart').value = p.dateStart || '';
-  document.getElementById('pfDateEnd').value = p.dateEnd || '';
+  document.getElementById('pfDateInput').value = '';
+  // 구버전 데이터(dateStart/dateEnd 단일 범위)는 자동으로 이후~이전 항목 한 쌍으로 변환해 보여준다.
+  if (p.customDateEntries) {
+    pendingPlanDateEntries = p.customDateEntries.slice();
+  } else if (p.dateStart) {
+    pendingPlanDateEntries = (p.dateEnd && p.dateEnd !== p.dateStart)
+      ? [{ date: p.dateStart, modifier: 'after' }, { date: p.dateEnd, modifier: 'before' }]
+      : [{ date: p.dateStart, modifier: 'exact' }];
+  } else {
+    pendingPlanDateEntries = [];
+  }
+  renderPlanDateList();
   document.getElementById('pfTimeStart').value = p.timeStart || '';
   document.getElementById('pfTimeEnd').value = p.timeEnd || '';
 
@@ -1917,8 +2058,7 @@ function submitPlanForm() {
   if (!selectedPlanProgress) { showToast('진행 체크 방식을 선택해주세요'); return; }
 
   const timeUnspecified = selectedPlanTimeMode !== 'specified';
-  const dateStart = timeUnspecified ? '' : document.getElementById('pfDateStart').value;
-  const dateEnd = timeUnspecified ? '' : document.getElementById('pfDateEnd').value;
+  const customDateEntries = timeUnspecified ? [] : pendingPlanDateEntries.slice();
   const timeStart = timeUnspecified ? '' : document.getElementById('pfTimeStart').value;
   const timeEnd = timeUnspecified ? '' : document.getElementById('pfTimeEnd').value;
 
@@ -1934,7 +2074,8 @@ function submitPlanForm() {
     const p = planBlocks.find(x => x.id === editPlanId);
     if (p) {
       p.name = name; p.desc = desc; p.type = selectedPlanType; p.progressType = selectedPlanProgress;
-      p.timeUnspecified = timeUnspecified; p.dateStart = dateStart; p.dateEnd = dateEnd;
+      p.timeUnspecified = timeUnspecified; p.customDateEntries = customDateEntries;
+      delete p.dateStart; delete p.dateEnd; // 구버전 단일 범위 필드는 더 이상 사용하지 않음
       p.timeStart = timeStart; p.timeEnd = timeEnd;
       if (selectedPlanProgress === 'counter') { p.total = total; p.current = current; }
       else if (selectedPlanProgress === 'toggle') { if (p.done === undefined) p.done = false; }
@@ -1944,7 +2085,7 @@ function submitPlanForm() {
     const plan = {
       id: Date.now() + Math.floor(Math.random()*1000),
       name, desc, type: selectedPlanType, progressType: selectedPlanProgress,
-      timeUnspecified, dateStart, dateEnd, timeStart, timeEnd,
+      timeUnspecified, customDateEntries, timeStart, timeEnd,
       order: planBlocks.length
     };
     if (selectedPlanProgress === 'counter') { plan.total = total; plan.current = current; }
@@ -2004,11 +2145,10 @@ function isPlanComplete(p) {
 function planTimeRangeLabel(p) {
   if (p.timeUnspecified) return '';
   const parts = [];
-  if (p.dateStart) {
-    let dateStr = p.dateStart;
-    if (p.dateEnd && p.dateEnd !== p.dateStart) dateStr += ` ~ ${p.dateEnd}`;
-    parts.push(dateStr);
-  }
+  const dateStr = p.customDateEntries && p.customDateEntries.length
+    ? formatPlanDateEntries(p.customDateEntries)
+    : (p.dateStart ? (p.dateEnd && p.dateEnd !== p.dateStart ? `${p.dateStart} ~ ${p.dateEnd}` : p.dateStart) : ''); // 구버전 데이터 호환
+  if (dateStr) parts.push(dateStr);
   if (p.timeStart) {
     let timeStr = p.timeStart;
     if (p.timeEnd && p.timeEnd !== p.timeStart) timeStr += `~${p.timeEnd}`;
@@ -2019,7 +2159,9 @@ function planTimeRangeLabel(p) {
 
 // "시간순" 서브탭 정렬 기준 키 (날짜 없으면 맨 뒤로)
 function planSortKey(p) {
-  const datePart = p.dateStart || '9999-99-99';
+  const datePart = (p.customDateEntries && p.customDateEntries.length)
+    ? earliestPlanDate(p.customDateEntries)
+    : (p.dateStart || '9999-99-99'); // 구버전 데이터 호환
   const timePart = p.timeStart || '99:99';
   return `${datePart} ${timePart}`;
 }
@@ -2089,7 +2231,7 @@ function renderPlanList() {
       </div>`;
     }
     const timeStr = planTimeRangeLabel(p);
-    return `<div class="card block-card type-${p.type} ${complete && p.progressType!=='none' ? 'completed':''}" data-id="${p.id}">
+    return `<div class="card block-card type-${p.type} ${complete && p.progressType!=='none' ? 'completed':''}" data-id="${p.id}" onclick="handleCardTap(event,this)">
       <div class="reorder-handle ${currentPlanSubtab === 'time' ? 'reorder-handle-disabled' : ''}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -2328,6 +2470,7 @@ function periodDateRangeLabel(pp) {
 
 /* ---------- 참조 선택 (할일 블록 + 계획 블록을 가리키는 약한 참조) ---------- */
 function openRefPicker() {
+  document.getElementById('refPickerSearch').value = '';
   renderRefPickerList();
   document.getElementById('refPickerOverlay').classList.add('open');
 }
@@ -2388,7 +2531,15 @@ function renderRefPickerList() {
     return;
   }
 
-  el.innerHTML = items.map(item => {
+  const query = (document.getElementById('refPickerSearch')?.value || '').trim().toLowerCase();
+  const filtered = query ? items.filter(item => item.name.toLowerCase().includes(query)) : items;
+
+  if (!filtered.length) {
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>검색 결과가 없어요</p></div>`;
+    return;
+  }
+
+  el.innerHTML = filtered.map(item => {
     const isSelected = pendingPeriodRefs.some(r => r.kind === item.kind && r.id === item.id && r.dateKey === item.dateKey && r.watchSource === item.watchSource);
     return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleRefSelection('${item.kind}',${item.id},${item.dateKey?`'${item.dateKey}'`:'null'},${item.watchSource?`'${item.watchSource}'`:'null'})">
       <span>${esc(item.name)}</span>
@@ -2458,6 +2609,7 @@ function resolveWatchRef(ref) {
 }
 
 function openWatchRefPicker() {
+  document.getElementById('watchRefPickerSearch').value = '';
   renderWatchRefPickerList();
   document.getElementById('watchRefPickerOverlay').classList.add('open');
 }
@@ -2467,6 +2619,7 @@ function renderWatchRefPickerList() {
   const items = [];
   const todayDay = days[TODAY_KEY()];
   (todayDay ? todayDay.watchBlocks || [] : []).forEach(w => {
+    if (w.archived) return; // 종료된 건 아래 watchArchiveItems 쪽에서 'archive'로 한 번만 다룬다 (중복 방지)
     items.push({ kind: 'ongoing', id: w.id, name: w.name, meta: `감상 · ${WATCH_TYPE_LABEL[w.type]} · ${w.progress}%` });
   });
   watchPlannedItems.forEach(item => {
@@ -2476,12 +2629,23 @@ function renderWatchRefPickerList() {
     items.push({ kind: 'archive', id: item.id, name: item.name, meta: `종료 · ${WATCH_TYPE_LABEL[item.type]}` });
   });
 
+  // 종료(archive) 상태의 블록은 항상 목록 맨 나중에 오도록 — 그 외 순서는 그대로 유지(안정 정렬)
+  items.sort((a, b) => (a.kind === 'archive' ? 1 : 0) - (b.kind === 'archive' ? 1 : 0));
+
   if (!items.length) {
     el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>참조할 감상 블록이 없어요</p></div>`;
     return;
   }
 
-  el.innerHTML = items.map(item => {
+  const query = (document.getElementById('watchRefPickerSearch')?.value || '').trim().toLowerCase();
+  const filtered = query ? items.filter(item => item.name.toLowerCase().includes(query)) : items;
+
+  if (!filtered.length) {
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>검색 결과가 없어요</p></div>`;
+    return;
+  }
+
+  el.innerHTML = filtered.map(item => {
     const isSelected = pendingWatchListRefs.some(r => r.kind === item.kind && r.id === item.id);
     return `<div class="ref-picker-item ${isSelected?'selected':''}" onclick="toggleWatchRefSelection('${item.kind}',${item.id})">
       <span>${esc(item.name)}</span>
@@ -2509,7 +2673,10 @@ function renderPendingWatchListRefs() {
     el.innerHTML = `<div class="ref-item-missing" style="padding:6px 2px;">아직 참조한 블록이 없어요</div>`;
     return;
   }
-  el.innerHTML = pendingWatchListRefs.map((ref, idx) => {
+  // 종료(archive) 상태의 블록은 항상 목록 맨 나중에 — 실제 삭제 인덱스는 원본 배열 기준을 유지한다.
+  const withIdx = pendingWatchListRefs.map((ref, idx) => ({ ref, idx }));
+  withIdx.sort((a, b) => (a.ref.kind === 'archive' ? 1 : 0) - (b.ref.kind === 'archive' ? 1 : 0));
+  el.innerHTML = withIdx.map(({ ref, idx }) => {
     const resolved = resolveWatchRef(ref);
     const label = resolved ? resolved.name : '(삭제된 블록)';
     return `<div class="ref-item">
@@ -2520,6 +2687,123 @@ function renderPendingWatchListRefs() {
     </div>`;
   }).join('');
 }
+
+/* =========================================================
+   BLOCK SEARCH (전체 / 탭별 블록 검색)
+   계획(planBlocks) · 할일(모든 날짜의 day.blocks) · 감상(모든 날짜의 watchBlocks +
+   예정/종료 아카이브)을 이름 기준으로 검색한다. 결과를 누르면 해당 탭/서브탭/날짜로
+   바로 이동해서 보여준다. 참조 추가 시트(refPicker/watchRefPicker)의 검색창과는 별개로,
+   여기는 "블록을 찾아서 그 화면으로 이동"하는 용도.
+   ========================================================= */
+function openSearch(scope) {
+  searchScope = scope || 'all';
+  document.querySelectorAll('#searchScopeGroup .seg-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === searchScope));
+  document.getElementById('searchInput').value = '';
+  renderSearchResults();
+  document.getElementById('searchOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('searchInput').focus(), 50);
+}
+
+function selectSearchScope(scope) {
+  searchScope = scope;
+  document.querySelectorAll('#searchScopeGroup .seg-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === scope));
+  renderSearchResults();
+}
+
+function collectSearchableBlocks() {
+  const results = [];
+
+  if (searchScope === 'all' || searchScope === 'plan') {
+    planBlocks.forEach(p => {
+      results.push({ scope: 'plan', name: p.name, meta: TYPE_LABEL[p.type], target: { kind: 'plan', id: p.id, timeUnspecified: !!p.timeUnspecified } });
+    });
+  }
+
+  if (searchScope === 'all' || searchScope === 'todo') {
+    Object.keys(days).sort().forEach(dateKey => {
+      (days[dateKey].blocks || []).forEach(b => {
+        results.push({ scope: 'todo', name: b.name, meta: `${TYPE_LABEL[b.type]} · ${dateKey}`, target: { kind: 'todo', id: b.id, dateKey } });
+      });
+    });
+  }
+
+  if (searchScope === 'all' || searchScope === 'watch') {
+    Object.keys(days).sort().forEach(dateKey => {
+      (days[dateKey].watchBlocks || []).forEach(w => {
+        if (w.archived) return; // 보관된 건 watchArchiveItems 쪽에서 중복 없이 다룬다
+        results.push({ scope: 'watch', name: w.name, meta: `감상 · ${WATCH_TYPE_LABEL[w.type]} · ${dateKey}`, target: { kind: 'watch-ongoing', id: w.id, dateKey } });
+      });
+    });
+    watchPlannedItems.forEach(item => {
+      results.push({ scope: 'watch', name: item.name, meta: `감상(예정) · ${WATCH_TYPE_LABEL[item.type]}`, target: { kind: 'watch-planned', id: item.id } });
+    });
+    watchArchiveItems.forEach(item => {
+      results.push({ scope: 'watch', name: item.name, meta: `감상(종료) · ${WATCH_TYPE_LABEL[item.type]}`, target: { kind: 'watch-archive', id: item.id } });
+    });
+  }
+
+  return results;
+}
+
+function renderSearchResults() {
+  const el = document.getElementById('searchResultsList');
+  const query = document.getElementById('searchInput').value.trim().toLowerCase();
+  let results = collectSearchableBlocks();
+  if (query) results = results.filter(r => r.name.toLowerCase().includes(query));
+
+  if (!results.length) {
+    el.innerHTML = `<div class="empty" style="height:auto;padding:30px 0;"><p>${query ? '검색 결과가 없어요' : '검색어를 입력해보세요'}</p></div>`;
+    return;
+  }
+
+  el.innerHTML = results.map((r, idx) => `<div class="ref-picker-item" onclick="goToSearchResult(${idx})">
+      <span>${esc(r.name)}</span>
+      <span class="search-result-date">${esc(r.meta)}</span>
+    </div>`).join('');
+
+  window._searchResultsCache = results; // goToSearchResult에서 인덱스로 다시 찾기 위한 임시 캐시
+}
+
+function goToSearchResult(idx) {
+  const r = (window._searchResultsCache || [])[idx];
+  if (!r) return;
+  closeOverlay('searchOverlay');
+  const t = r.target;
+
+  if (t.kind === 'plan') {
+    switchTab('plan');
+    switchPlanSubtab(t.timeUnspecified ? 'unspecified' : 'time');
+  } else if (t.kind === 'todo') {
+    switchTab('todo');
+    viewingDateKey = t.dateKey;
+    renderDayHeader(); renderBlocks();
+  } else if (t.kind === 'watch-ongoing') {
+    switchTab('watch');
+    switchWatchSubtab('ongoing');
+    viewingWatchDateKey = t.dateKey;
+    renderWatchHeader(); renderWatchBlocks();
+  } else if (t.kind === 'watch-planned') {
+    switchTab('watch');
+    switchWatchSubtab('planned');
+  } else if (t.kind === 'watch-archive') {
+    switchTab('watch');
+    switchWatchSubtab('archive');
+  }
+
+  flashBlockRow(t.id);
+}
+
+// 이동한 화면에서 해당 블록 카드를 잠깐 강조해서 눈에 띄게 한다.
+function flashBlockRow(id) {
+  setTimeout(() => {
+    const card = document.querySelector(`.list [data-id="${id}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('search-flash');
+    setTimeout(() => card.classList.remove('search-flash'), 1600);
+  }, 80);
+}
+
 
 function openWatchListAdd() {
   editWatchListId = null;
@@ -2600,11 +2884,12 @@ function renderWatchListTab() {
   const sorted = watchLists.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   el.innerHTML = sorted.map((wl, idx) => {
-    const refs = (wl.refs || []).map(resolveWatchRef).filter(Boolean);
+    const sortedRefs = (wl.refs || []).slice().sort((a, b) => (a.kind === 'archive' ? 1 : 0) - (b.kind === 'archive' ? 1 : 0));
+    const refs = sortedRefs.map(resolveWatchRef).filter(Boolean);
     const refsHtml = refs.length
       ? `<div class="ref-list" style="margin-top:8px;">${refs.map(r => `<div class="ref-item"><span class="ref-item-name">${esc(r.name)}</span><span class="ref-picker-item-meta">${esc(r.meta)}</span></div>`).join('')}</div>`
       : `<div class="ref-item-missing" style="margin-top:8px;">참조한 블록이 없어요</div>`;
-    return `<div class="card block-card type-unspecified" data-id="${wl.id}">
+    return `<div class="card block-card type-unspecified" data-id="${wl.id}" onclick="handleCardTap(event,this)">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -2729,6 +3014,7 @@ function switchWatchSubtab(sub) {
   document.getElementById('watchAddBtn').classList.toggle('hidden', sub === 'list');
   document.getElementById('watchListAddBtn').classList.toggle('hidden', sub !== 'list');
   updateReorderButtonVisibility();
+  updateSimpleViewGrid();
   renderWatchBlocks();
 }
 
@@ -2740,6 +3026,22 @@ function renderWatchHeader() {
   document.getElementById('watchDayLabel').textContent = isToday ? '오늘' : `${d.getMonth()+1}월 ${d.getDate()}일 (${weekday})`;
   document.getElementById('watchDayDate').textContent = isToday ? `${d.getMonth()+1}월 ${d.getDate()}일 (${weekday})` : '';
   document.getElementById('watchTodayJumpBtn').classList.toggle('hidden', isToday);
+}
+
+function openWatchAddForList() {
+  creatingWatchForList = true;
+  closeOverlay('watchListFormOverlay'); // 입력 내용은 DOM에 그대로 남아있고, 화면에서만 잠시 가린다
+  openWatchAdd();
+}
+
+// 감상 폼을 취소(닫기)할 때 — "목록에서 새 감상 만들기"로 들어온 경우라면
+// 그냥 닫지 않고 잠시 가려뒀던 목록 폼으로 되돌아간다 (작성 중이던 내용은 그대로 보존됨).
+function cancelWatchForm() {
+  closeOverlay('watchFormOverlay');
+  if (creatingWatchForList) {
+    creatingWatchForList = false;
+    document.getElementById('watchListFormOverlay').classList.add('open');
+  }
 }
 
 function openWatchAdd() {
@@ -2829,6 +3131,25 @@ function submitWatchForm() {
 
   saveDays(); renderWatchBlocks(); closeOverlay('watchFormOverlay');
   if (w) syncWatchArchiveLink(w, viewingWatchDateKey);
+
+  if (editWatchId === null && creatingWatchForList) {
+    // 목록 폼 안에서 "새 감상 만들고 참조하기"로 들어온 경우 — 방금 만든 감상 블록을 자동으로
+    // 참조 목록에 추가하고, 잠시 가려뒀던 목록 폼을 그대로(입력했던 내용 유지) 다시 연다.
+    // 종료/예정으로 바로 체크해서 만들었다면 참조도 그에 맞는 종류(kind)로 넣어줘야
+    // 종료 블록을 목록 맨 뒤로 보내는 정렬이 올바르게 동작한다.
+    creatingWatchForList = false;
+    let refKind = 'ongoing', refId = w.id;
+    if (w.archived) {
+      const archiveItem = watchArchiveItems.find(x => x.linkedWatchId === w.id);
+      if (archiveItem) { refKind = 'archive'; refId = archiveItem.id; }
+    } else if (w.planned) {
+      const plannedItem = watchPlannedItems.find(x => x.linkedWatchId === w.id);
+      if (plannedItem) { refKind = 'planned'; refId = plannedItem.id; }
+    }
+    pendingWatchListRefs.push({ kind: refKind, id: refId });
+    renderPendingWatchListRefs();
+    document.getElementById('watchListFormOverlay').classList.add('open');
+  }
 }
 
 // '종료'/'예정' 탭에서 직접 연 수정 폼 제출 처리.
@@ -3078,7 +3399,7 @@ function renderWatchOngoing() {
     const delta = watchDeltaForToday(w, viewingWatchDateKey);
     const deltaStr = (delta !== null && delta !== 0) ? `${delta > 0 ? '+' : ''}${delta}%p` : null;
     const memoCount = (w.memos || []).length;
-    return `<div class="card watch-card type-watch-${w.type} ${complete ? 'completed' : ''}" data-id="${w.id}">
+    return `<div class="card watch-card type-watch-${w.type} ${complete ? 'completed' : ''}" data-id="${w.id}" onclick="handleCardTap(event,this)">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -3160,7 +3481,7 @@ function renderWatchArchiveTab() {
 
   el.innerHTML = sorted.map(item => {
     const memoCount = (item.memos || []).length;
-    return `<div class="card watch-card type-watch-${item.type}" data-id="${item.id}">
+    return `<div class="card watch-card type-watch-${item.type}" data-id="${item.id}" onclick="handleCardTap(event,this)">
       <div class="card-main">
         <div class="card-header">
           <div class="card-title-wrap">
@@ -3211,7 +3532,7 @@ function renderWatchPlannedTab() {
 
   el.innerHTML = sorted.map((item, idx) => {
     const memoCount = (item.memos || []).length;
-    return `<div class="card watch-card type-watch-${item.type}" data-id="${item.id}">
+    return `<div class="card watch-card type-watch-${item.type}" data-id="${item.id}" onclick="handleCardTap(event,this)">
       <div class="reorder-handle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </div>
@@ -3598,15 +3919,27 @@ function copyMemo(id, dateKey) {
   }
 }
 
-function deleteMemo(id) {
-  if (!memos[viewingMemoDateKey]) return;
-  memos[viewingMemoDateKey] = memos[viewingMemoDateKey].filter(x => x.id !== id);
+function deleteMemo(id, dateKey) {
+  const dk = dateKey || viewingMemoDateKey;
+  if (!memos[dk]) return;
+  memos[dk] = memos[dk].filter(x => x.id !== id);
   saveMemos();
   // 삭제되는 메모가 고정되어 있었다면 고정에서도 자동으로 해제
   const beforeLen = pinnedMemos.length;
-  pinnedMemos = pinnedMemos.filter(p => !(p.memoId === id && p.dateKey === viewingMemoDateKey));
+  pinnedMemos = pinnedMemos.filter(p => !(p.memoId === id && p.dateKey === dk));
   if (pinnedMemos.length !== beforeLen) { savePinnedMemos(); renderPinnedMemos(); }
-  renderMemos();
+  if (dk === viewingMemoDateKey) renderMemos();
+  if (!document.getElementById('page-memo-archive').classList.contains('hidden')) renderMemoArchiveList();
+}
+
+function askDeleteMemo(id, dateKey) {
+  const dk = dateKey || viewingMemoDateKey;
+  document.getElementById('confirmMsg').innerHTML = '이 메모를 삭제할까요?<br>이 작업은 되돌릴 수 없어요.';
+  document.getElementById('confirmOkBtn').onclick = () => {
+    deleteMemo(id, dk);
+    closeOverlay('confirmOverlay');
+  };
+  document.getElementById('confirmOverlay').classList.add('open');
 }
 
 /* =========================================================
@@ -3627,7 +3960,7 @@ function toggleMemoArchive(memoId, dateKey) {
   m.archived = !m.archived;
   saveMemos();
   renderMemos();
-  if (document.getElementById('memoArchiveOverlay').classList.contains('open')) renderMemoArchiveList();
+  if (!document.getElementById('page-memo-archive').classList.contains('hidden')) renderMemoArchiveList();
 }
 
 /* =========================================================
@@ -3643,7 +3976,11 @@ function openMemoArchive() {
   memoArchiveSortDesc = true;
   document.getElementById('memoArchiveSortBtn').textContent = '최신순';
   renderMemoArchiveList();
-  document.getElementById('memoArchiveOverlay').classList.add('open');
+  document.getElementById('page-memo-archive').classList.remove('hidden');
+}
+
+function closeMemoArchive() {
+  document.getElementById('page-memo-archive').classList.add('hidden');
 }
 
 function toggleMemoArchiveSort() {
@@ -3661,6 +3998,14 @@ function getAllArchivedMemos() {
   });
   return result;
 }
+
+const MEMO_ICON = {
+  pin: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 3a1 1 0 0 1 1 1v6.5l2.4 4.8a1 1 0 0 1-.9 1.45H13v5a1 1 0 1 1-2 0v-5H5.5a1 1 0 0 1-.9-1.45L7 10.5V4a1 1 0 0 1 1-1z"/></svg>`,
+  archive: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`,
+  unarchive: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><polyline points="9 12 12 9 15 12"/><line x1="12" y1="9" x2="12" y2="16"/></svg>`,
+  copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  delete: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`
+};
 
 function renderMemoArchiveList() {
   const el = document.getElementById('memoArchiveList');
@@ -3686,8 +4031,11 @@ function renderMemoArchiveList() {
       <div class="memo-text">${escLinkify(m.text, 40)}</div>
       <div class="memo-meta-row">
         <span class="memo-time">${dateStr} ${timeStr}</span>
-        <button class="memo-archive-btn archived" onclick="toggleMemoArchive(${m.id},'${dateKey}')">보관 해제</button>
-        <button class="memo-copy-btn" onclick="copyMemo(${m.id},'${dateKey}')">복사</button>
+        <div class="memo-btns">
+          <button class="memo-icon-btn archived" onclick="toggleMemoArchive(${m.id},'${dateKey}')" aria-label="보관 해제">${MEMO_ICON.unarchive}</button>
+          <button class="memo-icon-btn" onclick="copyMemo(${m.id},'${dateKey}')" aria-label="복사">${MEMO_ICON.copy}</button>
+          <button class="memo-icon-btn danger" onclick="askDeleteMemo(${m.id},'${dateKey}')" aria-label="삭제">${MEMO_ICON.delete}</button>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -3758,10 +4106,12 @@ function renderMemos() {
       <div class="memo-text">${archiveIcon}${escLinkify(m.text, 40)}</div>
       <div class="memo-meta-row">
         <span class="memo-time">${timeStr}</span>
-        <button class="memo-pin-btn ${isPinned ? 'pinned' : ''}" onclick="toggleMemoPin(${m.id},'${viewingMemoDateKey}')">${isPinned ? '고정됨' : '고정'}</button>
-        <button class="memo-archive-btn ${m.archived ? 'archived' : ''}" onclick="toggleMemoArchive(${m.id},'${viewingMemoDateKey}')">${m.archived ? '보관됨' : '보관'}</button>
-        <button class="memo-copy-btn" onclick="copyMemo(${m.id})">복사</button>
-        <button class="memo-delete-btn" onclick="deleteMemo(${m.id})">삭제</button>
+        <div class="memo-btns">
+          <button class="memo-icon-btn ${isPinned ? 'pinned' : ''}" onclick="toggleMemoPin(${m.id},'${viewingMemoDateKey}')" aria-label="${isPinned ? '고정 해제' : '고정'}">${MEMO_ICON.pin}</button>
+          <button class="memo-icon-btn ${m.archived ? 'archived' : ''}" onclick="toggleMemoArchive(${m.id},'${viewingMemoDateKey}')" aria-label="${m.archived ? '보관 해제' : '보관'}">${MEMO_ICON.archive}</button>
+          <button class="memo-icon-btn" onclick="copyMemo(${m.id})" aria-label="복사">${MEMO_ICON.copy}</button>
+          <button class="memo-icon-btn danger" onclick="askDeleteMemo(${m.id})" aria-label="삭제">${MEMO_ICON.delete}</button>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -3771,6 +4121,60 @@ function renderMemos() {
 /* =========================================================
    YESTERDAY FEEDBACK
    ========================================================= */
+/* =========================================================
+   BLOCK COLOR (블록 커스텀 색상)
+   블록의 기본 색은 유형(type)에 따라 CSS 변수로 정해지지만, 사용자가 색을 직접
+   지정하면 block.color(hex)에 저장되고 카드에 인라인 스타일로 덧씌워진다.
+   이월(carryover) 시에는 새 블록이 { ...template } 스프레드로 만들어지므로
+   color 값도 자동으로 함께 이어진다.
+   ========================================================= */
+function isDarkModeActive() {
+  return themePref === 'dark' || (themePref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function hexToRgb(hex) {
+  let h = (hex || '').replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const n = parseInt(h, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+function mixColor(hex, target, ratio) {
+  const { r, g, b } = hexToRgb(hex);
+  const t = target === 'white' ? 255 : 0;
+  const mr = Math.round(r + (t - r) * ratio), mg = Math.round(g + (t - g) * ratio), mb = Math.round(b + (t - b) * ratio);
+  return `rgb(${mr},${mg},${mb})`;
+}
+// 카드에 적용할 인라인 style 문자열. color가 없거나, 절제(abstain) 유형처럼 경고성 반전 배색이
+// 고정된 유형이면 빈 문자열(유형 기본색 그대로 사용) — 절제 카드는 흰 글씨 대비가 깨지는 걸 방지.
+function blockColorStyle(color, type) {
+  if (!color || type === 'abstain') return '';
+  const dark = isDarkModeActive();
+  const bg = mixColor(color, dark ? 'black' : 'white', dark ? 0.72 : 0.78);
+  const border = dark ? mixColor(color, 'white', 0.15) : color;
+  return `background:${bg};border-color:${border};`;
+}
+
+// 블록 폼의 색상 스와치 선택 처리 — hex가 빈 문자열/null이면 "기본색" 선택.
+function selectBlockColor(hex) {
+  selectedBlockColor = hex || null;
+  document.querySelectorAll('#bfColorSwatches .color-swatch[data-color]').forEach(btn => {
+    btn.classList.toggle('selected', (btn.dataset.color || '') === (selectedBlockColor || ''));
+  });
+  const customBtn = document.getElementById('bfColorCustomSwatch');
+  const isCustom = selectedBlockColor && !BLOCK_COLOR_PRESETS.includes(selectedBlockColor);
+  customBtn.classList.toggle('selected', !!isCustom);
+  customBtn.style.background = isCustom ? selectedBlockColor : '';
+  if (isCustom) document.getElementById('bfColorPicker').value = selectedBlockColor;
+}
+function renderBlockColorSwatches() {
+  const el = document.getElementById('bfColorSwatches');
+  if (!el || el.dataset.built) return; // 한 번만 생성
+  el.dataset.built = '1';
+  const presetsHtml = BLOCK_COLOR_PRESETS.map(hex =>
+    `<button type="button" class="color-swatch" data-color="${hex}" style="background:${hex}" onclick="selectBlockColor('${hex}')" aria-label="색상 선택"></button>`
+  ).join('');
+  document.getElementById('bfColorDefaultSwatch').insertAdjacentHTML('afterend', presetsHtml);
+}
+
 /* =========================================================
    THEME (다크모드) — 'system'은 prefers-color-scheme을 따르고,
    'light'/'dark'는 메뉴에서 수동으로 선택한 값을 강제 적용한다.
@@ -3782,7 +4186,7 @@ function applyTheme() {
   // 'system'이면 클래스를 안 붙여서 CSS의 prefers-color-scheme 미디어쿼리가 그대로 적용됨
 
   // PWA 상단 상태바 색도 실제 배경(--white 변수)에 맞춰 갱신
-  const isDark = themePref === 'dark' || (themePref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const isDark = isDarkModeActive();
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');
   if (themeColorMeta) themeColorMeta.setAttribute('content', isDark ? '#1c1c1e' : '#ffffff');
 
@@ -3793,12 +4197,13 @@ function selectTheme(pref) {
   themePref = pref;
   localStorage.setItem('pc_theme_pref', pref);
   applyTheme();
+  renderBlocks(); // 커스텀 색이 지정된 블록의 명암 배합을 새 테마에 맞게 다시 계산
 }
 
 // 시스템 다크모드 설정이 바뀌는 경우(예: 야간에 자동 전환되는 OS 설정) 'system' 모드일 때 상태바 색을 같이 갱신
 if (window.matchMedia) {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (themePref === 'system') applyTheme();
+    if (themePref === 'system') { applyTheme(); renderBlocks(); }
   });
 }
 
@@ -3887,6 +4292,7 @@ if ('serviceWorker' in navigator) {
    INIT
    ========================================================= */
 applyTheme(); // 화면이 그려지기 전에 가장 먼저 테마를 적용해 깜빡임을 방지
+renderBlockColorSwatches();
 syncCarryoversForToday();
 syncWatchForToday();
 // lastKnownTodayKey(영구 저장된 값)와 비교해서, 마지막 세션 이후 실제로 자정을 넘긴
@@ -3900,6 +4306,9 @@ renderDayHeader();
 renderBlocks();
 renderPinnedMemos();
 updateReorderButtonVisibility();
+document.getElementById('simpleViewToggle').setAttribute('aria-pressed', simpleView ? 'true' : 'false');
+document.getElementById('simpleViewToggle').classList.toggle('active', simpleView);
+updateSimpleViewGrid();
 initPlanSubtabSwipe();
 initWatchSubtabSwipe();
 

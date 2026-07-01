@@ -39,6 +39,9 @@
       <span class="page-bar-title">계획</span>
       <div class="page-bar-actions">
         <button class="btn-secondary hidden" id="periodAddBtn" onclick="openPeriodPlanAdd()">+ 기간계획</button>
+        <button class="icon-btn search-btn" onclick="openSearch('plan')" aria-label="검색">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
         <button class="btn-add" id="planAddBtn" onclick="openPlanAdd()" aria-label="계획 추가">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           추가
@@ -66,6 +69,9 @@
     <div class="page-bar">
       <span class="page-bar-title">블록</span>
       <div class="page-bar-actions">
+        <button class="icon-btn search-btn" onclick="openSearch('todo')" aria-label="검색">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
         <button class="btn-add" onclick="openBlockAdd()" aria-label="블록 추가">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           추가
@@ -102,6 +108,9 @@
     <div class="page-bar">
       <span class="page-bar-title" id="watchPageBarTitle">감상</span>
       <div class="page-bar-actions">
+        <button class="icon-btn search-btn" onclick="openSearch('watch')" aria-label="검색">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
         <button class="btn-add" id="watchAddBtn" onclick="openWatchAdd()" aria-label="감상 추가">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           추가
@@ -143,6 +152,21 @@
     </button>
   </div>
 
+  <!-- ============ MEMO ARCHIVE PAGE (full page) ============ -->
+  <div class="full-page hidden" id="page-memo-archive">
+    <div class="page-bar">
+      <span class="page-bar-title">메모 보관함</span>
+    </div>
+    <div class="memo-archive-toolbar">
+      <input type="text" id="memoArchiveSearch" placeholder="보관한 메모 검색" autocomplete="off" oninput="renderMemoArchiveList()">
+      <button class="memo-archive-sort-btn" id="memoArchiveSortBtn" onclick="toggleMemoArchiveSort()">최신순</button>
+    </div>
+    <div id="memoArchiveList" class="memo-list memo-archive-list"></div>
+    <button class="memo-archive-fab" onclick="closeMemoArchive()" aria-label="메모로 돌아가기">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+    </button>
+  </div>
+
   <!-- ============ GAME PAGE ============ -->
   <div id="install-banner">
     <span>홈 화면에 추가하면 앱처럼 사용할 수 있어요</span>
@@ -157,6 +181,9 @@
       <button class="tab-btn" id="tabBtn-memo" onclick="switchTab('memo')">메모</button>
     </div>
     <div class="bottombar-actions">
+      <button class="ghost-btn icon-only" id="simpleViewToggle" onclick="toggleSimpleView()" aria-pressed="false" aria-label="간단 보기">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="18" rx="1.5"/></svg>
+      </button>
       <button class="ghost-btn icon-only" id="reorderToggle" onclick="toggleReorder()" aria-pressed="false" aria-label="순서 변경">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
@@ -187,6 +214,17 @@
         <button class="seg-btn" data-val="leisure" onclick="selectSeg('bfTypeGroup',this)">여가</button>
         <button class="seg-btn" data-val="routine" onclick="selectSeg('bfTypeGroup',this)">루틴</button>
         <button class="seg-btn" data-val="abstain" onclick="selectSeg('bfTypeGroup',this)">절제</button>
+      </div>
+    </div>
+
+    <div class="field" id="bfColorField">
+      <label>색상 (선택)</label>
+      <div class="color-swatch-row" id="bfColorSwatches">
+        <button type="button" class="color-swatch color-swatch-default" id="bfColorDefaultSwatch" data-color="" onclick="selectBlockColor('')" aria-label="기본 색"></button>
+        <button type="button" class="color-swatch color-swatch-custom" id="bfColorCustomSwatch" onclick="document.getElementById('bfColorPicker').click()" aria-label="색 직접 고르기">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.4-.3-.4-.5-.8-.5-1.4 0-1.1.9-2 2-2h2.4c2 0 3.6-1.6 3.6-3.6C21 6.8 17.1 2 12 2z"/></svg>
+        </button>
+        <input type="color" id="bfColorPicker" class="color-picker-hidden" oninput="selectBlockColor(this.value)">
       </div>
     </div>
 
@@ -372,7 +410,7 @@
     </div>
 
     <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('watchFormOverlay')">취소</button>
+      <button class="btn-cancel" onclick="cancelWatchForm()">취소</button>
       <button class="btn-save" onclick="submitWatchForm()">저장</button>
     </div>
   </div>
@@ -412,22 +450,6 @@
   </div>
 </div>
 
-<!-- ============ MEMO ARCHIVE SHEET ============ -->
-<div class="overlay" id="memoArchiveOverlay" onclick="overlayClose(event,'memoArchiveOverlay')">
-  <div class="sheet sheet-tall sheet-memo-archive">
-    <div class="sheet-handle"></div>
-    <h2>메모 보관함</h2>
-    <div class="memo-archive-toolbar">
-      <input type="text" id="memoArchiveSearch" placeholder="보관한 메모 검색" autocomplete="off" oninput="renderMemoArchiveList()">
-      <button class="memo-archive-sort-btn" id="memoArchiveSortBtn" onclick="toggleMemoArchiveSort()">최신순</button>
-    </div>
-    <div id="memoArchiveList" class="memo-list memo-archive-list"></div>
-    <div class="sheet-actions">
-      <button class="btn-cancel" onclick="closeOverlay('memoArchiveOverlay')">닫기</button>
-    </div>
-  </div>
-</div>
-
 <!-- ============ PLAN FORM SHEET ============ -->
 <div class="overlay" id="planFormOverlay" onclick="if(event.target===this) cancelPlanForm()">
   <div class="sheet sheet-tall">
@@ -458,12 +480,14 @@
         <button class="seg-btn" data-val="specified" onclick="selectSeg('pfTimeModeGroup',this); onPlanTimeModeChanged()">시간 지정</button>
       </div>
       <div class="hidden" id="pfTimeFields" style="margin-top:10px;">
-        <label>날짜 (범위 지정 가능)</label>
-        <div class="range-row">
-          <input type="date" id="pfDateStart">
-          <span class="range-sep">~</span>
-          <input type="date" id="pfDateEnd">
+        <label>날짜</label>
+        <div class="custom-time-input-row">
+          <input type="date" id="pfDateInput">
+          <button class="btn-secondary" onclick="addPlanDateEntry('before')">이전</button>
+          <button class="btn-secondary" onclick="addPlanDateEntry('after')">이후</button>
+          <button class="btn-secondary" onclick="addPlanDateEntry('exact')">그냥추가</button>
         </div>
+        <div id="pfDateList" class="custom-time-list"></div>
         <label style="margin-top:10px;">시간 (선택, 범위 지정 가능)</label>
         <div class="range-row">
           <input type="time" id="pfTimeStart">
@@ -557,6 +581,10 @@
   <div class="sheet sheet-tall">
     <div class="sheet-handle"></div>
     <h2>블록 참조 선택</h2>
+    <div class="ref-picker-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="refPickerSearch" placeholder="블록 이름 검색" autocomplete="off" oninput="renderRefPickerList()">
+    </div>
     <div id="refPickerList" class="ref-picker-list"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('refPickerOverlay')">닫기</button>
@@ -584,6 +612,7 @@
       <label>참조한 감상 블록</label>
       <div id="wlRefList" class="ref-list"></div>
       <button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="openWatchRefPicker()">+ 감상 블록 참조 추가</button>
+      <button class="btn-secondary" style="width:100%;margin-top:8px;" onclick="openWatchAddForList()">+ 새 감상 만들고 참조하기</button>
     </div>
 
     <div class="sheet-actions">
@@ -598,10 +627,44 @@
   <div class="sheet sheet-tall">
     <div class="sheet-handle"></div>
     <h2>감상 블록 참조 선택</h2>
+    <div class="ref-picker-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="watchRefPickerSearch" placeholder="감상 블록 이름 검색" autocomplete="off" oninput="renderWatchRefPickerList()">
+    </div>
     <div id="watchRefPickerList" class="ref-picker-list"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('watchRefPickerOverlay')">닫기</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ GENERAL SEARCH SHEET (전체/탭별 블록 검색) ============ -->
+<div class="overlay" id="searchOverlay" onclick="overlayClose(event,'searchOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2>블록 검색</h2>
+    <div class="seg-group" id="searchScopeGroup">
+      <button class="seg-btn" data-val="all" onclick="selectSearchScope('all')">전체</button>
+      <button class="seg-btn" data-val="plan" onclick="selectSearchScope('plan')">계획</button>
+      <button class="seg-btn" data-val="todo" onclick="selectSearchScope('todo')">할일</button>
+      <button class="seg-btn" data-val="watch" onclick="selectSearchScope('watch')">감상</button>
+    </div>
+    <div class="ref-picker-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="searchInput" placeholder="블록 이름 검색" autocomplete="off" oninput="renderSearchResults()">
+    </div>
+    <div id="searchResultsList" class="ref-picker-list"></div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('searchOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CARD DETAIL OVERLAY (간단 보기에서 카드 탭 시 전체 모습을 보여줌) ============ -->
+<div class="overlay" id="cardDetailOverlay" onclick="overlayClose(event,'cardDetailOverlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div id="cardDetailBody" class="card-detail-body"></div>
   </div>
 </div>
 

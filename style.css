@@ -245,6 +245,23 @@ html, body {
 .icon-btn:active { background: rgba(0,0,0,0.06); }
 .icon-btn svg { width: 15px; height: 15px; }
 
+/* ===== Block color swatches (블록 색상 지정) ===== */
+.color-swatch-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 4px; }
+.color-swatch {
+  width: 30px; height: 30px; border-radius: 50%; padding: 0; cursor: pointer; flex-shrink: 0;
+  border: 2px solid transparent; box-shadow: 0 0 0 1px var(--gray-300) inset;
+  display: flex; align-items: center; justify-content: center;
+}
+.color-swatch.selected { border-color: var(--black); box-shadow: 0 0 0 2px var(--white), 0 0 0 4px var(--black); }
+.color-swatch-default { background: var(--white); position: relative; }
+.color-swatch-default::after {
+  content: ''; position: absolute; left: 5px; right: 5px; top: 50%; height: 2px;
+  background: #e05c5c; transform: rotate(-40deg); border-radius: 1px;
+}
+.color-swatch-custom { background: var(--gray-100); color: var(--gray-600); box-shadow: 0 0 0 1px var(--gray-300) inset; }
+.color-swatch-custom svg { width: 15px; height: 15px; }
+.color-picker-hidden { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
+
 /* ===== Problem counter card body ===== */
 .card-body { display: flex; align-items: center; gap: 12px; }
 .ctrl-row { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -470,18 +487,14 @@ html, body {
 }
 .pinned-memo-unpin svg { width: 13px; height: 13px; }
 
-.memo-pin-btn { font-size: 10.5px; color: var(--gray-600); background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
-.memo-pin-btn.pinned { color: var(--black); font-weight: 700; }
-.memo-archive-btn { font-size: 10.5px; color: var(--gray-600); background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
-.memo-archive-btn.archived { color: var(--accent-purple); font-weight: 700; }
-.memo-bubble { background: var(--gray-100); border-radius: 16px; padding: 10px 14px; max-width: 88%; align-self: flex-start; }
+.memo-bubble { background: var(--gray-100); border-radius: 16px; padding: 10px 14px; max-width: 92%; align-self: flex-start; }
 .memo-text { font-size: 14.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .memo-archived-icon { width: 12px; height: 12px; flex-shrink: 0; color: var(--accent-purple); vertical-align: -1px; margin-right: 4px; }
-.memo-meta-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
-.memo-time { font-size: 10.5px; color: var(--gray-400); }
+.memo-meta-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.memo-time { font-size: 10.5px; color: var(--gray-400); flex-shrink: 0; }
+.memo-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60%; color: var(--gray-400); text-align: center; gap: 8px; font-size: 13.5px; }
 .memo-copy-btn { font-size: 10.5px; color: var(--gray-600); background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
 .memo-delete-btn { font-size: 10.5px; color: #e05c5c; background: none; border: none; cursor: pointer; padding: 0; font-weight: 500; text-decoration: underline; }
-.memo-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60%; color: var(--gray-400); text-align: center; gap: 8px; font-size: 13.5px; }
 
 .memo-input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--gray-200); flex-shrink: 0; }
 .memo-input {
@@ -497,16 +510,25 @@ html, body {
 /* ===== Memo archive (보관함) ===== */
 #page-memo { position: relative; }
 .memo-archive-fab {
-  position: absolute; right: 14px; bottom: calc(64px + var(--safe-bottom));
-  width: 34px; height: 34px; border-radius: 50%; background: var(--white); color: var(--black);
+  position: absolute; right: 14px; bottom: calc(76px + var(--safe-bottom));
+  width: 38px; height: 38px; border-radius: 50%; background: var(--white); color: var(--black);
   border: 1px solid var(--gray-300); cursor: pointer; display: flex; align-items: center; justify-content: center;
   box-shadow: 0 2px 8px rgba(0,0,0,0.12); z-index: 5;
 }
 .memo-archive-fab:active { background: var(--gray-100); }
-.memo-archive-fab svg { width: 17px; height: 17px; }
+.memo-archive-fab svg { width: 18px; height: 18px; }
 
-.sheet-memo-archive { display: flex; flex-direction: column; max-height: 82vh; }
-.memo-archive-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-shrink: 0; }
+/* ===== Full page (탭과 별개로 화면 전체를 덮는 페이지, 예: 메모 보관함) ===== */
+.full-page {
+  position: fixed; inset: 0; z-index: 40;
+  max-width: 480px; margin: 0 auto;
+  background: var(--white); color: var(--black);
+  display: flex; flex-direction: column; overflow: hidden;
+  padding-top: var(--safe-top);
+}
+.full-page.hidden { display: none; }
+
+.memo-archive-toolbar { display: flex; gap: 8px; padding: 10px 16px 0; flex-shrink: 0; }
 .memo-archive-toolbar input {
   flex: 1; border: 1px solid var(--gray-300); border-radius: 9px; padding: 9px 12px;
   font-size: 14px; background: var(--white); color: var(--black);
@@ -517,7 +539,21 @@ html, body {
   border: none; border-radius: 9px; padding: 9px 12px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
 }
 .memo-archive-sort-btn:active { background: var(--gray-200); }
-.memo-archive-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
+.memo-archive-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; min-height: 120px; padding-bottom: calc(90px + var(--safe-bottom)); }
+
+/* ===== Memo icon buttons (고정/보관/복사/삭제) ===== */
+.memo-btns { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.memo-icon-btn {
+  width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--gray-300);
+  background: none; color: var(--gray-600); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0;
+}
+.memo-icon-btn:active { background: var(--gray-100); }
+.memo-icon-btn svg { width: 13px; height: 13px; }
+.memo-icon-btn.pinned { background: var(--black); border-color: var(--black); color: var(--white); }
+.memo-icon-btn.archived { background: var(--accent-purple); border-color: var(--accent-purple); color: var(--white); }
+.memo-icon-btn.danger { color: #e05c5c; border-color: rgba(224,92,92,0.4); }
+.memo-icon-btn.danger:active { background: rgba(224,92,92,0.12); }
 
 /* drag/reorder */
 .reorder-handle { display: none; width: 30px; height: 30px; border: none; background: none; cursor: grab; align-items: center; justify-content: center; color: var(--gray-600); flex-shrink: 0; touch-action: none; }
@@ -601,7 +637,24 @@ body.reordering .move-btns { display: flex; }
 }
 .ref-picker-item:active { background: var(--gray-100); }
 .ref-picker-item.selected { border-color: var(--black); background: var(--gray-100); }
-.ref-picker-item-meta { font-size: 11px; color: var(--gray-400); }
+.ref-picker-item-meta { font-size: 11px; color: var(--gray-400); flex-shrink: 0; margin-left: 8px; }
+
+/* ===== 검색창 (참조 추가 시 / 블록 검색 시 공통) ===== */
+.ref-picker-search {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--gray-300); border-radius: 9px;
+  padding: 9px 12px; margin-bottom: 10px;
+}
+.ref-picker-search svg { width: 15px; height: 15px; color: var(--gray-400); flex-shrink: 0; }
+.ref-picker-search input { flex: 1; border: none; background: none; font-size: 14px; color: var(--black); padding: 0; }
+.ref-picker-search input:focus { outline: none; }
+#searchScopeGroup { margin-bottom: 10px; }
+.search-result-date { font-size: 11px; color: var(--gray-400); flex-shrink: 0; margin-left: 8px; }
+.search-btn { flex-shrink: 0; }
+@keyframes searchFlash {
+  0%, 100% { box-shadow: none; }
+  20%, 80% { box-shadow: 0 0 0 2px var(--black); }
+}
+.search-flash { animation: searchFlash 1.6s ease; border-radius: 12px; }
 
 .sheet-actions { display: flex; gap: 10px; margin-top: 18px; }
 .btn-cancel { flex: 1; padding: 12px; border: 1px solid var(--black); border-radius: 10px; background: none; font-size: 15px; font-weight: 500; cursor: pointer; color: var(--black); }
@@ -659,7 +712,8 @@ body.reordering .move-btns { display: flex; }
 
 /* ===== Custom time entries in block form ===== */
 .custom-time-input-row { display: flex; align-items: center; gap: 6px; }
-.custom-time-input-row input[type="time"] { flex: 1; min-width: 0; border: 1px solid var(--black); border-radius: 8px; padding: 8px 8px; font-size: 14px; }
+.custom-time-input-row input[type="time"],
+.custom-time-input-row input[type="date"] { flex: 1; min-width: 0; border: 1px solid var(--black); border-radius: 8px; padding: 8px 8px; font-size: 14px; }
 .custom-time-input-row .btn-secondary { flex-shrink: 0; padding: 8px 10px; font-size: 12.5px; }
 .custom-time-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .custom-time-chip {
@@ -675,3 +729,42 @@ body.reordering .move-btns { display: flex; }
 .ref-item-dates { display: flex; align-items: center; gap: 6px; }
 .ref-date-input { flex: 1; border: 1px solid var(--gray-300); border-radius: 7px; padding: 6px 8px; font-size: 12.5px; min-width: 0; }
 .ref-chip-date { font-size: 10.5px; color: var(--gray-600); flex-shrink: 0; }
+
+/* =========================================================
+   SIMPLE VIEW (간단 보기 — 2열 압축 레이아웃)
+   기간계획을 제외한 블록 카드 목록(할일/계획/감상)에 적용. 목록 컨테이너에 grid-2col 클래스가
+   붙으면 2열 그리드로 바뀌고 부가 버튼/상태는 숨겨진다 — 실제로는 CSS로 가려질 뿐이라
+   카드를 탭하면 그 DOM을 복제해 상세 오버레이(원래 크기)로 그대로 보여줄 수 있다.
+   ========================================================= */
+.list.grid-2col {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start;
+}
+.grid-2col .card { padding: 9px 10px; margin-bottom: 0; border-radius: 10px; cursor: pointer; }
+.grid-2col .card-header { margin-bottom: 4px; gap: 4px; }
+.grid-2col .card-title { font-size: 12.5px; line-height: 1.25; }
+.grid-2col .card-sub,
+.grid-2col .block-desc,
+.grid-2col .card-btns,
+.grid-2col .move-btns,
+.grid-2col .reorder-handle,
+.grid-2col .watch-flag-row,
+.grid-2col .watch-delta-chip,
+.grid-2col .prog-wrap,
+.grid-2col .ref-list,
+.grid-2col .ref-item-missing { display: none; }
+
+/* 주요 상태(카운터/완료토글/진행률)는 남기되 버튼·글자 크기만 줄인다 */
+.grid-2col .block-progress-row { margin-top: 6px; gap: 6px; flex-wrap: wrap; }
+.grid-2col .ctrl-btn { width: 24px !important; height: 24px !important; font-size: 14px !important; border-radius: 6px; }
+.grid-2col .fraction { font-size: 13px !important; min-width: auto !important; padding: 2px 4px; }
+.grid-2col .fraction span { font-size: 10px !important; }
+.grid-2col .counter-pct { font-size: 9.5px; }
+.grid-2col .toggle-check { width: 20px; height: 20px; min-width: 20px; max-width: 20px; flex: 0 0 20px; border-radius: 5px; }
+.grid-2col .toggle-check svg { width: 11px; height: 11px; }
+.grid-2col .toggle-label { font-size: 11px; }
+.grid-2col .watch-progress-btn { font-size: 11px; padding: 3px 7px; min-width: auto; }
+.grid-2col .heatmap { display: none; }
+
+/* 카드 탭으로 열리는 상세 오버레이 — grid-2col 범위 밖이라 압축 CSS가 적용되지 않고
+   원래(간단 보기 이전) 모습 그대로 보인다. */
+.card-detail-body .card { margin-bottom: 0; cursor: default; }
