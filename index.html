@@ -32,13 +32,13 @@
     <div class="subtabs">
       <button class="subtab-btn active" id="planSubtab-time" onclick="switchPlanSubtab('time')">시간순</button>
       <button class="subtab-btn" id="planSubtab-unspecified" onclick="switchPlanSubtab('unspecified')">시간미지정</button>
-      <button class="subtab-btn" id="planSubtab-period" onclick="switchPlanSubtab('period')">기간계획</button>
+      <button class="subtab-btn" id="planSubtab-period" onclick="switchPlanSubtab('period')">프로젝트</button>
     </div>
 
     <div class="page-bar">
       <span class="page-bar-title">계획</span>
       <div class="page-bar-actions">
-        <button class="btn-secondary hidden" id="periodAddBtn" onclick="openPeriodPlanAdd()">+ 기간계획</button>
+        <button class="btn-secondary hidden" id="periodAddBtn" onclick="openPeriodPlanAdd()">+ 프로젝트</button>
         <button class="icon-btn search-btn" onclick="openSearch('plan')" aria-label="검색">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </button>
@@ -72,6 +72,9 @@
         <button class="icon-btn search-btn" onclick="openSearch('todo')" aria-label="검색">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </button>
+        <button class="icon-btn" onclick="openMiniAlarmAdd()" aria-label="미니 알림 추가">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2"/><path d="M5 3 2 6M22 6l-3-3"/></svg>
+        </button>
         <button class="btn-add" onclick="openBlockAdd()" aria-label="블록 추가">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           추가
@@ -79,6 +82,7 @@
       </div>
     </div>
     <div id="activeTimerBanner" class="active-timer-banner"></div>
+    <div id="miniAlarmList" class="mini-alarm-list hidden"></div>
     <div id="blockList" class="list"></div>
   </div>
 
@@ -195,6 +199,29 @@
 </div>
 
 <!-- ============ BLOCK FORM SHEET ============ -->
+<!-- ============ MINI ALARM FORM (미니 시간 알림) ============ -->
+<div class="overlay" id="miniAlarmFormOverlay" onclick="overlayClose(event,'miniAlarmFormOverlay')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2 id="miniAlarmSheetTitle">알림 추가</h2>
+
+    <div class="field">
+      <label>제목</label>
+      <input type="text" id="maTitle" placeholder="예: 약 먹기" maxlength="30" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>시간</label>
+      <input type="time" id="maTime">
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('miniAlarmFormOverlay')">취소</button>
+      <button class="btn-save" onclick="submitMiniAlarmForm()">저장</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="blockFormOverlay" onclick="overlayClose(event,'blockFormOverlay')">
   <div class="sheet sheet-tall">
     <div class="sheet-handle"></div>
@@ -377,6 +404,11 @@
     </div>
 
     <div class="field">
+      <label>발표년도 (선택)</label>
+      <input type="number" id="wfYear" placeholder="예: 2024" min="1800" max="2200" inputmode="numeric">
+    </div>
+
+    <div class="field">
       <label>설명 (선택)</label>
       <input type="text" id="wfDesc" placeholder="간단한 메모" maxlength="200" autocomplete="off">
     </div>
@@ -384,15 +416,49 @@
     <div class="field">
       <label>유형</label>
       <div class="seg-group" id="wfTypeGroup">
-        <button class="seg-btn" data-val="book" onclick="selectSeg('wfTypeGroup',this)">독서</button>
-        <button class="seg-btn" data-val="movie" onclick="selectSeg('wfTypeGroup',this)">영화</button>
-        <button class="seg-btn" data-val="etc" onclick="selectSeg('wfTypeGroup',this)">기타</button>
+        <button class="seg-btn" data-val="book" onclick="selectSeg('wfTypeGroup',this);onWatchTypeChanged()">독서</button>
+        <button class="seg-btn" data-val="movie" onclick="selectSeg('wfTypeGroup',this);onWatchTypeChanged()">영화</button>
+        <button class="seg-btn" data-val="series" onclick="selectSeg('wfTypeGroup',this);onWatchTypeChanged()">시리즈</button>
+        <button class="seg-btn" data-val="etc" onclick="selectSeg('wfTypeGroup',this);onWatchTypeChanged()">기타</button>
+      </div>
+    </div>
+
+    <div class="field" id="wfProgressField">
+      <label>진행도 (%)</label>
+      <input type="number" id="wfProgress" placeholder="예: 0" min="0" max="100" inputmode="numeric">
+    </div>
+
+    <div class="field hidden" id="wfSeriesField">
+      <label>총 화수/권수</label>
+      <input type="number" id="wfSeriesTotal" placeholder="예: 12" min="1" max="9999" inputmode="numeric">
+      <label style="margin-top:10px;">현재까지 본 화수/권수</label>
+      <input type="number" id="wfSeriesCurrent" placeholder="예: 0" min="0" max="9999" inputmode="numeric">
+    </div>
+
+    <div class="field">
+      <label>집중비율 <span id="wfFocusRatioValue">0%</span></label>
+      <div class="focus-ratio-row">
+        <button type="button" class="focus-ratio-arrow" onclick="adjustFocusRatioInput(-5)" aria-label="5% 감소">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <input type="range" id="wfFocusRatio" min="0" max="100" step="5" value="0" oninput="onFocusRatioInputChange()">
+        <button type="button" class="focus-ratio-arrow" onclick="adjustFocusRatioInput(5)" aria-label="5% 증가">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
       </div>
     </div>
 
     <div class="field">
-      <label>진행도 (%)</label>
-      <input type="number" id="wfProgress" placeholder="예: 0" min="0" max="100" inputmode="numeric">
+      <label>평가</label>
+      <button type="button" class="rating-preset-select-btn unselected" id="wfRatingPresetBtn" onclick="openWatchRatingPresetPicker()">프리셋 선택</button>
+    </div>
+
+    <div class="field hidden" id="wfRatingSectionField">
+      <div id="wfRatingList" class="rating-list"></div>
+      <div class="rating-add-row">
+        <input type="text" id="wfRatingNewName" placeholder="새 평가 항목 (예: 연출, 몰입감)" maxlength="20" autocomplete="off">
+        <button type="button" class="btn-secondary" onclick="addRatingCriterionInForm()">추가</button>
+      </div>
     </div>
 
     <div class="field" id="wfPlannedField">
@@ -529,7 +595,7 @@
 <div class="overlay" id="periodFormOverlay" onclick="overlayClose(event,'periodFormOverlay')">
   <div class="sheet sheet-tall">
     <div class="sheet-handle"></div>
-    <h2 id="periodSheetTitle">기간계획 추가</h2>
+    <h2 id="periodSheetTitle">프로젝트 추가</h2>
 
     <div class="field">
       <label>기간 종류</label>
@@ -634,6 +700,22 @@
     <div id="watchRefPickerList" class="ref-picker-list"></div>
     <div class="sheet-actions">
       <button class="btn-cancel" onclick="closeOverlay('watchRefPickerOverlay')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ WATCH RATING PRESET PICKER (평가 프리셋 선택/생성/삭제) ============ -->
+<div class="overlay" id="watchRatingPresetPickerOverlay" onclick="overlayClose(event,'watchRatingPresetPickerOverlay')">
+  <div class="sheet sheet-tall">
+    <div class="sheet-handle"></div>
+    <h2>평가 프리셋 선택</h2>
+    <div id="watchRatingPresetPickerList" class="ref-picker-list"></div>
+    <div class="rating-add-row" style="margin-top:12px;">
+      <input type="text" id="newRatingPresetName" placeholder="새 프리셋 이름 (예: 영화, 소설)" maxlength="20" autocomplete="off">
+      <button type="button" class="btn-secondary" onclick="createWatchRatingPreset()">추가</button>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn-cancel" onclick="closeOverlay('watchRatingPresetPickerOverlay')">닫기</button>
     </div>
   </div>
 </div>

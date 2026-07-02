@@ -1,14 +1,24 @@
 /* =========================================================
    STORAGE SCHEMA
-   pc_days        : { "2026-06-17": { blocks:[...], watchBlocks:[...] }, ... }
+   pc_days        : { "2026-06-17": { blocks:[...], watchBlocks:[...], miniAlarms:[...] }, ... }
+     miniAlarm (미니 시간 알림): { id, title, time("HH:MM"), fired: bool }
+       // 제목+시간만 있는 아주 작은 1줄 블록. 실제 시계가 그 시각이 되면 알림을 띄우고 fired를 true로
+       // 바꿔 하루에 한 번만 울리게 한다. 날짜별로 독립적이라 자동 이월되지 않는다.
      block (할일): { id, name, desc, type, time, customTimeEntries?, progressType,
        total?, current?, done?, carryover, carryoverId?, sessions? }
        (customTimeEntries: [{ time:"HH:MM", modifier: 'before'|'after'|'exact' }] —
         time이 'custom'일 때만 쓰임. before/after가 정확히 1개씩이면 자동으로 시간대
         범위로 표시되고, 그 외에는 각 항목이 따로 나열된다. 구버전 데이터는 customTime
         문자열 하나만 있을 수 있으며 이 경우 단일 'exact' 항목으로 취급한다.)
-     watchBlock (감상): { id, name, author, type(book/movie/etc), progress(0~100),
+     watchBlock (감상): { id, name, author, year?, type(book/movie/series/etc), progress(0~100),
+       seriesTotal?, seriesCurrent? (type이 series일 때만 — 진행도는 할일 블록과 같은 카운터 방식이고
+       progress는 round(seriesCurrent/seriesTotal*100)으로 항상 동기화된다),
+       focusRatio(0~100, 5단위)?, ratingPresetId?(어떤 평가 프리셋을 쓰는지),
+       ratings?: { [criterionId]: 0~5(0.5단위) },
        archived: bool, watchChainId: string, memos: [{id,text,time}] }
+   pc_watch_rating_presets: [ {id, name, criteria:[{id,name}]}, ... ]
+     // 감상 블록 "평가" 프리셋 — 유형과 무관하게 사용자가 이름을 정해 자유롭게 만들고,
+     // 감상 블록마다(유형 선택과는 별개로) 그중 하나를 지정해서 쓴다.
    pc_carryover_meta  : { <carryoverId>: { stopped: bool } }   // 할일 이행/루틴 체인
    pc_watch_chain_meta: { <watchChainId>: { stopped: bool } }  // 감상 이월 체인
    pc_memos       : { "2026-06-17": [{id, text, time}], ... }  // 메모 탭
@@ -66,6 +76,11 @@ let watchArchiveItems = JSON.parse(localStorage.getItem('pc_watch_archive_items'
 let watchPlannedItems = JSON.parse(localStorage.getItem('pc_watch_planned_items') || '[]'); // 예정
 // '목록'은 날짜와 완전히 무관한, 기간계획과 같은 방식으로 다른 감상 블록들을 참조하는 묶음 카드
 let watchLists = JSON.parse(localStorage.getItem('pc_watch_lists') || '[]');
+// 감상 블록 유형별 "평가" 기준 프리셋 — 사용자가 유형별로 자유롭게 평가 항목 이름을 추가한다.
+// { book: [{id,name}], movie: [...], series: [...], etc: [...] }
+// 감상 블록 "평가" 기준 프리셋 — 유형과 무관하게 사용자가 이름을 정해 만들어두고,
+// 감상 블록 생성/수정 시 그중 하나를 골라 지정한다. [{id, name, criteria:[{id,name}]}]
+let watchRatingPresets = JSON.parse(localStorage.getItem('pc_watch_rating_presets') || '[]');
 
 let editBlockId = null;
 let deleteBlockId = null;
@@ -84,6 +99,8 @@ let progressEditWatchId = null;
 let watchMemoTargetId = null;
 let watchMemoTargetKind = null; // null(오늘 원본) | 'archive' | 'planned'
 let selectedWatchType = null;
+let pendingWatchRatings = {}; // 감상 폼 작성 중 임시로 들고 있는 평가 값들 { [criterionId]: 0~5(0.5단위) }
+let pendingWatchRatingPresetId = null; // 감상 폼에서 선택 중인 평가 프리셋 id (null이면 미지정)
 let editPlanId = null;
 let deletePlanId = null;
 let selectedPlanType = null, selectedPlanTimeMode = null, selectedPlanProgress = null;
@@ -115,7 +132,21 @@ viewingWatchDateKey = TODAY_KEY();
 
 const TYPE_LABEL = { schedule: '일정', once: '일회성', todo: '할일', leisure: '여가', routine: '루틴', unspecified: '미지정', abstain: '절제' };
 const TIME_LABEL = { morning: '오전', afternoon: '오후', night: '밤' };
-const WATCH_TYPE_LABEL = { book: '독서', movie: '영화', etc: '기타' };
+const WATCH_TYPE_LABEL = { book: '독서', movie: '영화', series: '시리즈', etc: '기타' };
+
+// 구버전 호환: 예전엔 유형(book/movie/...)에 프리셋이 자동으로 귀속되는 방식이었다.
+// { book:[...], movie:[...] } 형태(객체)로 저장돼 있으면 유형 이름을 딴 독립 프리셋들로 변환한다.
+if (watchRatingPresets && !Array.isArray(watchRatingPresets)) {
+  const converted = [];
+  Object.keys(watchRatingPresets).forEach(typeKey => {
+    const criteria = watchRatingPresets[typeKey];
+    if (Array.isArray(criteria) && criteria.length) {
+      converted.push({ id: 'rp_' + typeKey + '_' + Date.now() + Math.floor(Math.random()*1000), name: WATCH_TYPE_LABEL[typeKey] || typeKey, criteria });
+    }
+  });
+  watchRatingPresets = converted;
+  localStorage.setItem('pc_watch_rating_presets', JSON.stringify(watchRatingPresets));
+}
 
 /* ---------- persistence helpers ---------- */
 function saveDays() {
@@ -130,6 +161,7 @@ function savePeriodPlans() { localStorage.setItem('pc_period_plans', JSON.string
 function saveWatchArchiveItems() { localStorage.setItem('pc_watch_archive_items', JSON.stringify(watchArchiveItems)); }
 function saveWatchPlannedItems() { localStorage.setItem('pc_watch_planned_items', JSON.stringify(watchPlannedItems)); }
 function saveWatchLists() { localStorage.setItem('pc_watch_lists', JSON.stringify(watchLists)); }
+function saveWatchRatingPresets() { localStorage.setItem('pc_watch_rating_presets', JSON.stringify(watchRatingPresets)); }
 function saveActiveTimer() {
   if (activeTimer) localStorage.setItem('pc_active_timer', JSON.stringify(activeTimer));
   else localStorage.removeItem('pc_active_timer');
@@ -152,6 +184,7 @@ function addDaysToKey(key, delta) {
 function ensureDay(key) {
   if (!days[key]) days[key] = { blocks: [], watchBlocks: [] };
   if (!days[key].watchBlocks) days[key].watchBlocks = [];
+  if (!days[key].miniAlarms) days[key].miniAlarms = [];
   return days[key];
 }
 
@@ -211,6 +244,10 @@ function updateReorderButtonVisibility() {
     || (currentTab === 'watch' && currentWatchSubtab !== 'archive');
   document.getElementById('reorderToggle').classList.toggle('reorder-toggle-hidden', !showReorder);
   if (reordering && !showReorder) toggleReorder();
+
+  // 간단 보기는 블록 카드를 쓰는 계획/할일/감상 탭에서만 의미가 있고, 메모 탭에는 적용 대상이 없다.
+  const showSimpleView = currentTab !== 'memo';
+  document.getElementById('simpleViewToggle').classList.toggle('reorder-toggle-hidden', !showSimpleView);
 }
 
 function switchTab(tab) {
@@ -300,7 +337,7 @@ function overlayClose(e, id) { if (e.target === document.getElementById(id)) clo
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay','searchOverlay','cardDetailOverlay'].forEach(closeOverlay);
+    ['blockFormOverlay','confirmOverlay','menuOverlay','timerOverlay','feedbackOverlay','watchFormOverlay','watchProgressOverlay','watchMemoOverlay','planFormOverlay','periodFormOverlay','refPickerOverlay','importPopupOverlay','spendOverlay','searchOverlay','cardDetailOverlay','miniAlarmFormOverlay','watchRatingPresetPickerOverlay'].forEach(closeOverlay);
     closeMemoArchive();
   }
 });
@@ -1368,6 +1405,115 @@ function renderActiveTimerBanner() {
   el.classList.toggle('hidden', rows.length === 0);
 }
 
+/* =========================================================
+   MINI ALARM (미니 시간 알림 블록)
+   제목 + 시간만 가진 아주 작은 1줄짜리 블록. 그날(day.miniAlarms)에 속하고,
+   실제 시계가 그 시각이 되면 알림(Notification API, 권한 없으면 토스트)을 띄운다.
+   ========================================================= */
+let editMiniAlarmId = null;
+
+function renderMiniAlarms() {
+  const day = ensureDay(viewingDateKey);
+  const el = document.getElementById('miniAlarmList');
+  if (!el) return;
+  const alarms = (day.miniAlarms || []).slice().sort((a, b) => a.time.localeCompare(b.time));
+  if (!alarms.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML = alarms.map(a => `
+    <div class="mini-alarm-row ${a.fired ? 'fired' : ''}" onclick="openMiniAlarmEdit(${a.id})">
+      <svg class="mini-alarm-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2"/><path d="M5 3 2 6M22 6l-3-3"/></svg>
+      <span class="mini-alarm-time">${a.time}</span>
+      <span class="mini-alarm-title">${esc(a.title)}</span>
+      <button class="mini-alarm-delete" onclick="event.stopPropagation();askDeleteMiniAlarm(${a.id})" aria-label="알림 삭제">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  `).join('');
+}
+
+function openMiniAlarmAdd() {
+  editMiniAlarmId = null;
+  document.getElementById('miniAlarmSheetTitle').textContent = '알림 추가';
+  document.getElementById('maTitle').value = '';
+  document.getElementById('maTime').value = '';
+  document.getElementById('miniAlarmFormOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('maTitle').focus(), 80);
+}
+
+function openMiniAlarmEdit(id) {
+  const day = ensureDay(viewingDateKey);
+  const a = (day.miniAlarms || []).find(x => x.id === id);
+  if (!a) return;
+  editMiniAlarmId = id;
+  document.getElementById('miniAlarmSheetTitle').textContent = '알림 수정';
+  document.getElementById('maTitle').value = a.title;
+  document.getElementById('maTime').value = a.time;
+  document.getElementById('miniAlarmFormOverlay').classList.add('open');
+}
+
+function submitMiniAlarmForm() {
+  const title = document.getElementById('maTitle').value.trim();
+  const time = document.getElementById('maTime').value;
+  if (!title) { document.getElementById('maTitle').focus(); return; }
+  if (!time) { document.getElementById('maTime').focus(); return; }
+  const day = ensureDay(viewingDateKey);
+  if (!day.miniAlarms) day.miniAlarms = [];
+  if (editMiniAlarmId !== null) {
+    const a = day.miniAlarms.find(x => x.id === editMiniAlarmId);
+    if (a) { a.title = title; a.time = time; a.fired = false; } // 시간을 바꿨으면 다시 울릴 수 있게 리셋
+  } else {
+    day.miniAlarms.push({ id: Date.now() + Math.floor(Math.random()*1000), title, time, fired: false });
+    ensureNotificationPermission();
+  }
+  saveDays(); renderMiniAlarms(); closeOverlay('miniAlarmFormOverlay');
+}
+
+function askDeleteMiniAlarm(id) {
+  document.getElementById('confirmMsg').innerHTML = '이 알림을 삭제할까요?';
+  document.getElementById('confirmOkBtn').onclick = () => {
+    const day = ensureDay(viewingDateKey);
+    day.miniAlarms = (day.miniAlarms || []).filter(x => x.id !== id);
+    saveDays(); renderMiniAlarms();
+    closeOverlay('confirmOverlay');
+  };
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function ensureNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+// 실제 벽시계 시각이 오늘(TODAY_KEY) 알림의 시각과 같아지면 한 번만 울린다.
+// 앱이 열려 있는 동안만 동작하는 클라이언트 타이머 방식 — 20초 간격으로 확인한다.
+function checkMiniAlarms() {
+  const todayKey = TODAY_KEY();
+  const day = days[todayKey];
+  if (!day || !day.miniAlarms || !day.miniAlarms.length) return;
+  const now = new Date();
+  const nowStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  let changed = false;
+  day.miniAlarms.forEach(a => {
+    if (!a.fired && a.time === nowStr) {
+      fireMiniAlarmNotification(a);
+      a.fired = true;
+      changed = true;
+    }
+  });
+  if (changed) {
+    saveDays();
+    if (currentTab === 'todo' && viewingDateKey === todayKey) renderMiniAlarms();
+  }
+}
+
+function fireMiniAlarmNotification(a) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification('⏰ ' + a.title, { body: a.time, tag: 'mini-alarm-' + a.id }); } catch (e) { /* 알림 생성 실패 시 토스트로 대체 */ }
+  }
+  showToast(`⏰ ${a.title} (${a.time})`);
+}
+
 // 연속 완료일수를 단계별로 점점 화려하게 보여주는 배지.
 // 0일이면 아예 표시하지 않고, 1일부터는 기본 칩, 3/7/14/30일 구간마다 더 화려해진다.
 function renderStreakBadge(streak) {
@@ -1443,6 +1589,7 @@ function renderHeatmap(carryoverId) {
    ========================================================= */
 function renderBlocks() {
   renderActiveTimerBanner();
+  renderMiniAlarms();
   const day = ensureDay(viewingDateKey);
   const el = document.getElementById('blockList');
   if (!day.blocks.length) {
@@ -2369,7 +2516,7 @@ function monthToDateRange(monthStr) {
 function openPeriodPlanAdd() {
   editPeriodId = null;
   creatingPlanForPeriod = false;
-  document.getElementById('periodSheetTitle').textContent = '기간계획 추가';
+  document.getElementById('periodSheetTitle').textContent = '프로젝트 추가';
   document.getElementById('ppDesc').value = '';
   document.getElementById('ppMonthInput').value = '';
   document.getElementById('ppWeekInput').value = '';
@@ -2390,7 +2537,7 @@ function openPeriodPlanEdit(id) {
   if (!pp) return;
   editPeriodId = id;
   creatingPlanForPeriod = false;
-  document.getElementById('periodSheetTitle').textContent = '기간계획 수정';
+  document.getElementById('periodSheetTitle').textContent = '프로젝트 수정';
   document.getElementById('ppDesc').value = pp.desc || '';
   selectedPeriodMode = pp.mode;
   pendingPeriodRefs = (pp.refs || []).slice();
@@ -2454,7 +2601,7 @@ function askDeletePeriod(id) {
   const pp = periodPlans.find(x => x.id === id);
   if (!pp) return;
   deletePlanId = id;
-  document.getElementById('confirmMsg').innerHTML = `이 기간계획을 삭제할까요?<br>참조된 블록들은 삭제되지 않아요.`;
+  document.getElementById('confirmMsg').innerHTML = `이 프로젝트를 삭제할까요?<br>참조된 블록들은 삭제되지 않아요.`;
   document.getElementById('confirmOkBtn').onclick = () => {
     periodPlans = periodPlans.filter(x => x.id !== deletePlanId);
     savePeriodPlans(); renderPlanList(); closeOverlay('confirmOverlay');
@@ -2935,7 +3082,7 @@ function renderPeriodList(el) {
   if (!list.length) {
     el.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
-      <p>기간계획을 추가해보세요</p>
+      <p>프로젝트를 추가해보세요</p>
     </div>`;
     return;
   }
@@ -3050,8 +3197,16 @@ function openWatchAdd() {
   document.getElementById('watchSheetTitle').textContent = '감상 추가';
   document.getElementById('wfName').value = '';
   document.getElementById('wfAuthor').value = '';
+  document.getElementById('wfYear').value = '';
   document.getElementById('wfDesc').value = '';
   document.getElementById('wfProgress').value = '0';
+  document.getElementById('wfSeriesTotal').value = '';
+  document.getElementById('wfSeriesCurrent').value = '0';
+  document.getElementById('wfFocusRatio').value = '0';
+  onFocusRatioInputChange();
+  pendingWatchRatings = {};
+  pendingWatchRatingPresetId = null;
+  refreshWatchRatingSection();
   // '예정'/'종료' 서브탭에서 추가하면 그 상태로 바로 시작되게 한다 ('종료'는 보관 체크로 처리)
   document.getElementById('wfArchive').checked = (currentWatchSubtab === 'archive');
   document.getElementById('wfPlanned').checked = (currentWatchSubtab === 'planned');
@@ -3059,6 +3214,7 @@ function openWatchAdd() {
   document.getElementById('wfArchiveField').classList.remove('hidden');
   selectedWatchType = null;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(b => b.classList.remove('selected'));
+  onWatchTypeChanged();
   document.getElementById('watchFormOverlay').classList.add('open');
   setTimeout(() => document.getElementById('wfName').focus(), 80);
 }
@@ -3072,33 +3228,62 @@ function openWatchEdit(id) {
   document.getElementById('watchSheetTitle').textContent = '감상 수정';
   document.getElementById('wfName').value = w.name;
   document.getElementById('wfAuthor').value = w.author || '';
+  document.getElementById('wfYear').value = w.year || '';
   document.getElementById('wfDesc').value = w.desc || '';
   document.getElementById('wfProgress').value = w.progress;
+  document.getElementById('wfSeriesTotal').value = w.seriesTotal || '';
+  document.getElementById('wfSeriesCurrent').value = w.seriesCurrent || 0;
+  document.getElementById('wfFocusRatio').value = w.focusRatio || 0;
+  onFocusRatioInputChange();
+  pendingWatchRatings = Object.assign({}, w.ratings || {});
+  pendingWatchRatingPresetId = w.ratingPresetId || null;
+  refreshWatchRatingSection();
   document.getElementById('wfArchive').checked = !!w.archived;
   document.getElementById('wfPlanned').checked = !!w.planned;
   document.getElementById('wfPlannedField').classList.remove('hidden');
   document.getElementById('wfArchiveField').classList.remove('hidden');
   selectedWatchType = w.type;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === w.type));
+  onWatchTypeChanged();
   document.getElementById('watchFormOverlay').classList.add('open');
   setTimeout(() => document.getElementById('wfName').focus(), 80);
+}
+
+// 폼의 진행도 입력을 유형에 맞게 읽어서 { progress(0~100), seriesTotal?, seriesCurrent? }로 정규화.
+function readWatchProgressFromForm() {
+  if (selectedWatchType === 'series') {
+    let total = parseInt(document.getElementById('wfSeriesTotal').value) || 0;
+    let current = parseInt(document.getElementById('wfSeriesCurrent').value) || 0;
+    total = Math.max(0, total);
+    current = Math.max(0, Math.min(total || current, current));
+    const progress = total > 0 ? Math.round(current / total * 100) : 0;
+    return { progress, seriesTotal: total, seriesCurrent: current };
+  }
+  let progress = parseInt(document.getElementById('wfProgress').value);
+  if (isNaN(progress)) progress = 0;
+  progress = Math.max(0, Math.min(100, progress));
+  return { progress, seriesTotal: undefined, seriesCurrent: undefined };
 }
 
 function submitWatchForm() {
   const name = document.getElementById('wfName').value.trim();
   const author = document.getElementById('wfAuthor').value.trim();
+  const yearRaw = document.getElementById('wfYear').value.trim();
+  const year = yearRaw ? parseInt(yearRaw) : null;
   const desc = document.getElementById('wfDesc').value.trim();
-  let progress = parseInt(document.getElementById('wfProgress').value);
   const archived = document.getElementById('wfArchive').checked;
   const planned = document.getElementById('wfPlanned').checked;
   if (!name) { document.getElementById('wfName').focus(); return; }
   if (!selectedWatchType) { showToast('유형을 선택해주세요'); return; }
-  if (isNaN(progress)) progress = 0;
-  progress = Math.max(0, Math.min(100, progress));
+  const { progress, seriesTotal, seriesCurrent } = readWatchProgressFromForm();
+  if (selectedWatchType === 'series' && !seriesTotal) { document.getElementById('wfSeriesTotal').focus(); showToast('총 화수/권수를 입력해주세요'); return; }
+  const focusRatio = parseInt(document.getElementById('wfFocusRatio').value) || 0;
+  const ratings = Object.assign({}, pendingWatchRatings);
+  const ratingPresetId = pendingWatchRatingPresetId;
 
   // '종료'/'예정' 탭에서 직접 연 수정 폼이면 오늘 원본이 아니라 해당 아카이브 항목을 고친다.
   if (editWatchArchiveKind !== null) {
-    submitWatchArchiveItemEdit(name, author, desc, progress, archived, planned);
+    submitWatchArchiveItemEdit(name, author, year, desc, progress, archived, planned, seriesTotal, seriesCurrent, focusRatio, ratings, ratingPresetId);
     return;
   }
 
@@ -3108,8 +3293,10 @@ function submitWatchForm() {
   if (editWatchId !== null) {
     w = day.watchBlocks.find(x => x.id === editWatchId);
     if (w) {
-      w.name = name; w.author = author; w.desc = desc; w.type = selectedWatchType;
-      w.progress = progress; w.archived = archived; w.planned = planned;
+      w.name = name; w.author = author; w.year = year; w.desc = desc; w.type = selectedWatchType;
+      w.progress = progress; w.seriesTotal = seriesTotal; w.seriesCurrent = seriesCurrent;
+      w.focusRatio = focusRatio; w.ratings = ratings; w.ratingPresetId = ratingPresetId;
+      w.archived = archived; w.planned = planned;
       // 진행도/보관 상태가 바뀌면 이월 체인의 stopped 여부를 다시 맞춰준다.
       // (100% 또는 보관 중이면 멈춤, 둘 다 해제되면 다시 이월 대상으로 재개)
       if (w.watchChainId) {
@@ -3121,7 +3308,8 @@ function submitWatchForm() {
     const chainId = 'w' + Date.now() + Math.floor(Math.random()*1000);
     w = {
       id: Date.now() + Math.floor(Math.random()*1000),
-      name, author, desc, type: selectedWatchType, progress, archived, planned,
+      name, author, year, desc, type: selectedWatchType, progress, seriesTotal, seriesCurrent,
+      focusRatio, ratings, ratingPresetId, archived, planned,
       watchChainId: chainId, memos: []
     };
     watchChainMeta[chainId] = { stopped: progress >= 100 || archived };
@@ -3154,13 +3342,14 @@ function submitWatchForm() {
 
 // '종료'/'예정' 탭에서 직접 연 수정 폼 제출 처리.
 // 아직 오늘 원본과 연결돼 있다면 원본도 같은 내용으로 같이 갱신해서 자연스럽게 동기화되게 한다.
-function submitWatchArchiveItemEdit(name, author, desc, progress, archived, planned) {
+function submitWatchArchiveItemEdit(name, author, year, desc, progress, archived, planned, seriesTotal, seriesCurrent, focusRatio, ratings, ratingPresetId) {
   const kind = editWatchArchiveKind;
   const store = getWatchArchiveStore(kind);
   const item = store.find(x => x.id === editWatchId);
   if (!item) { closeOverlay('watchFormOverlay'); return; }
 
-  item.name = name; item.author = author; item.desc = desc; item.type = selectedWatchType; item.progress = progress;
+  item.name = name; item.author = author; item.year = year; item.desc = desc; item.type = selectedWatchType; item.progress = progress;
+  item.seriesTotal = seriesTotal; item.seriesCurrent = seriesCurrent; item.focusRatio = focusRatio; item.ratings = ratings; item.ratingPresetId = ratingPresetId;
   if (kind === 'archive') item.archived = archived;
 
   const isLinked = item.linkedWatchId !== null && item.linkedWatchId !== undefined;
@@ -3168,7 +3357,8 @@ function submitWatchArchiveItemEdit(name, author, desc, progress, archived, plan
     const todayDay = ensureDay(TODAY_KEY());
     const w = todayDay.watchBlocks.find(x => x.id === item.linkedWatchId);
     if (w) {
-      w.name = name; w.author = author; w.desc = desc; w.type = selectedWatchType; w.progress = progress;
+      w.name = name; w.author = author; w.year = year; w.desc = desc; w.type = selectedWatchType; w.progress = progress;
+      w.seriesTotal = seriesTotal; w.seriesCurrent = seriesCurrent; w.focusRatio = focusRatio; w.ratings = ratings; w.ratingPresetId = ratingPresetId;
       if (kind === 'archive') w.archived = archived;
       if (kind === 'planned') w.planned = planned;
       if (w.watchChainId) {
@@ -3262,6 +3452,221 @@ function submitWatchProgress() {
   syncWatchArchiveLink(w, viewingWatchDateKey);
 }
 
+// 진행도를 다시 계산해서 반영하고, 100%(완료) 경계를 넘나들 때 이월 체인 상태를 함께 맞춰준다.
+// 감상 유형이 무엇이든(퍼센트든 시리즈 카운터든) w.progress는 항상 "완료 여부 판정용 0~100 값"으로 유지된다.
+function applyWatchProgressValue(w, val) {
+  val = Math.max(0, Math.min(100, val));
+  w.progress = val;
+  if (val >= 100 && w.watchChainId) {
+    watchChainMeta[w.watchChainId] = { stopped: true };
+    saveWatchChainMeta();
+  } else if (val < 100 && w.watchChainId && !w.archived) {
+    watchChainMeta[w.watchChainId] = { stopped: false };
+    saveWatchChainMeta();
+  }
+}
+
+/* =========================================================
+   시리즈 카운터 (감상 블록 유형 "시리즈" 전용 진행도)
+   할일 블록의 카운터(+/-)와 같은 방식이지만, 감상은 진행도가 100%를 넘을 수 없으므로
+   현재 화수/권수가 총 화수/권수를 넘지 못하도록 상한을 둔다.
+   ========================================================= */
+function changeWatchSeriesCounter(id, delta) {
+  const day = ensureDay(viewingWatchDateKey);
+  const w = day.watchBlocks.find(x => x.id === id);
+  if (!w || w.type !== 'series') return;
+  const total = w.seriesTotal || 1;
+  const cur = Math.max(0, Math.min(total, (w.seriesCurrent || 0) + delta));
+  w.seriesCurrent = cur;
+  applyWatchProgressValue(w, total > 0 ? Math.round(cur / total * 100) : 0);
+  saveDays(); renderWatchBlocks();
+  syncWatchArchiveLink(w, viewingWatchDateKey);
+}
+
+/* =========================================================
+   집중비율 (5%씩 움직이는 수평 바) — 오늘 진행 중인 카드에서 슬라이더를 드래그하거나
+   양쪽 화살표를 눌러 직접 조작한다. 드래그(oninput) 중에는 값 라벨만 갱신하고, 손을 뗀
+   순간(onchange)에만 저장 + 전체 리렌더를 해서 드래그 도중 카드가 다시 그려져 끊기는 걸 막는다.
+   ========================================================= */
+function onWatchFocusRatioCardInput(id, val) {
+  const card = document.querySelector(`#watchList .card[data-id="${id}"]`);
+  if (!card) return;
+  const label = card.querySelector('.focus-ratio-value');
+  if (label) label.textContent = `${val}%`;
+}
+function commitWatchFocusRatio(id, val) {
+  const day = ensureDay(viewingWatchDateKey);
+  const w = day.watchBlocks.find(x => x.id === id);
+  if (!w) return;
+  w.focusRatio = Math.max(0, Math.min(100, parseInt(val) || 0));
+  saveDays(); renderWatchBlocks();
+}
+function changeWatchFocusRatio(id, delta) {
+  const day = ensureDay(viewingWatchDateKey);
+  const w = day.watchBlocks.find(x => x.id === id);
+  if (!w) return;
+  w.focusRatio = Math.max(0, Math.min(100, (w.focusRatio || 0) + delta));
+  saveDays(); renderWatchBlocks();
+}
+
+/* =========================================================
+   평가 (독립적으로 이름 붙여 만드는 평가 프리셋 + 0.5 단위 5점 별점)
+   watchRatingPresets = [{id, name, criteria:[{id,name}]}, ...] — 유형과 무관하게 사용자가
+   원하는 이름으로 프리셋을 만들어두고, 감상 블록마다 그중 하나를 "평가 프리셋"으로 지정한다
+   (w.ratingPresetId). 각 감상 블록의 w.ratings = { [criterionId]: 0~5(0.5 단위) }.
+   별점 위젯은 "빈 별" 위에 "채워진 별"을 폭(%)만큼 겹쳐 그리는 방식이라 0.5 단위 표현이 자연스럽다.
+   ========================================================= */
+function getRatingPreset(id) {
+  return watchRatingPresets.find(p => p.id === id) || null;
+}
+
+function starWidgetHTML(critId, value, onclickFn) {
+  const pct = Math.max(0, Math.min(100, (value / 5) * 100));
+  return `<div class="star-widget" onclick="${onclickFn}(event,'${critId}')">
+    <div class="star-empty">★★★★★</div>
+    <div class="star-filled" style="width:${pct}%">★★★★★</div>
+  </div>`;
+}
+function starClickToValue(e) {
+  const widget = e.currentTarget;
+  const rect = widget.getBoundingClientRect();
+  const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  return Math.max(0, Math.min(5, Math.round(ratio * 10) / 2));
+}
+
+// 폼 안의 "평가 프리셋 선택" 버튼 라벨 + 그 아래 평가 항목 섹션을 함께 갱신한다.
+function refreshWatchRatingSection() {
+  const preset = pendingWatchRatingPresetId ? getRatingPreset(pendingWatchRatingPresetId) : null;
+  document.getElementById('wfRatingPresetBtn').textContent = preset ? preset.name : '프리셋 선택';
+  document.getElementById('wfRatingPresetBtn').classList.toggle('unselected', !preset);
+  document.getElementById('wfRatingSectionField').classList.toggle('hidden', !preset);
+  renderRatingFormList();
+}
+
+// 폼(추가/수정) 안에서의 평가 — 아직 실제 블록에 저장되지 않은 pendingWatchRatings에 임시로 담아둔다.
+function renderRatingFormList() {
+  const el = document.getElementById('wfRatingList');
+  const preset = pendingWatchRatingPresetId ? getRatingPreset(pendingWatchRatingPresetId) : null;
+  if (!preset) { el.innerHTML = ''; return; }
+  if (!preset.criteria.length) { el.innerHTML = `<div class="rating-empty">아직 평가 항목이 없어요. 아래에서 추가해보세요</div>`; return; }
+  el.innerHTML = preset.criteria.map(crit => {
+    const val = pendingWatchRatings[crit.id] || 0;
+    return `<div class="rating-row">
+      <span class="rating-name">${esc(crit.name)}</span>
+      ${starWidgetHTML(crit.id, val, 'handleFormStarClick')}
+      <span class="rating-value">${val.toFixed(1)}</span>
+      <button type="button" class="rating-remove" onclick="removeRatingCriterionInForm('${crit.id}')" aria-label="항목 삭제">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+}
+function handleFormStarClick(e, critId) {
+  pendingWatchRatings[critId] = starClickToValue(e);
+  renderRatingFormList();
+}
+function addRatingCriterionInForm() {
+  const preset = pendingWatchRatingPresetId ? getRatingPreset(pendingWatchRatingPresetId) : null;
+  if (!preset) { showToast('평가 프리셋을 먼저 선택해주세요'); return; }
+  const input = document.getElementById('wfRatingNewName');
+  const name = input.value.trim();
+  if (!name) return;
+  if (preset.criteria.some(c => c.name === name)) { showToast('이미 있는 항목이에요'); return; }
+  preset.criteria.push({ id: 'rc' + Date.now() + Math.floor(Math.random()*10000), name });
+  saveWatchRatingPresets();
+  input.value = '';
+  renderRatingFormList();
+}
+function removeRatingCriterionInForm(critId) {
+  const preset = pendingWatchRatingPresetId ? getRatingPreset(pendingWatchRatingPresetId) : null;
+  if (!preset) return;
+  preset.criteria = preset.criteria.filter(c => c.id !== critId);
+  saveWatchRatingPresets();
+  delete pendingWatchRatings[critId];
+  renderRatingFormList();
+}
+
+/* ---- 평가 프리셋 선택/생성/삭제 시트 ---- */
+function openWatchRatingPresetPicker() {
+  renderWatchRatingPresetPickerList();
+  document.getElementById('watchRatingPresetPickerOverlay').classList.add('open');
+}
+function renderWatchRatingPresetPickerList() {
+  const el = document.getElementById('watchRatingPresetPickerList');
+  const noneRow = `<div class="ref-picker-item ${!pendingWatchRatingPresetId?'selected':''}" onclick="selectWatchRatingPreset(null)">
+      <span>선택 안 함</span>
+    </div>`;
+  if (!watchRatingPresets.length) {
+    el.innerHTML = noneRow + `<div class="empty" style="height:auto;padding:20px 0;"><p>아직 만든 프리셋이 없어요. 아래에서 새로 만들어보세요</p></div>`;
+    return;
+  }
+  el.innerHTML = noneRow + watchRatingPresets.map(p => `
+    <div class="ref-picker-item ${p.id===pendingWatchRatingPresetId?'selected':''}" onclick="selectWatchRatingPreset('${p.id}')">
+      <span>${esc(p.name)} <span class="ref-picker-item-meta">${p.criteria.length}개 항목</span></span>
+      <button type="button" class="rating-remove" onclick="event.stopPropagation();askDeleteWatchRatingPreset('${p.id}')" aria-label="프리셋 삭제">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`).join('');
+}
+function selectWatchRatingPreset(id) {
+  pendingWatchRatingPresetId = id;
+  closeOverlay('watchRatingPresetPickerOverlay');
+  refreshWatchRatingSection();
+}
+function createWatchRatingPreset() {
+  const input = document.getElementById('newRatingPresetName');
+  const name = input.value.trim();
+  if (!name) return;
+  if (watchRatingPresets.some(p => p.name === name)) { showToast('이미 있는 이름이에요'); return; }
+  const preset = { id: 'rp' + Date.now() + Math.floor(Math.random()*10000), name, criteria: [] };
+  watchRatingPresets.push(preset);
+  saveWatchRatingPresets();
+  input.value = '';
+  pendingWatchRatingPresetId = preset.id;
+  closeOverlay('watchRatingPresetPickerOverlay');
+  refreshWatchRatingSection();
+}
+function askDeleteWatchRatingPreset(id) {
+  const preset = getRatingPreset(id);
+  if (!preset) return;
+  document.getElementById('confirmMsg').innerHTML = `'${esc(preset.name)}' 프리셋을 삭제할까요?<br>이 프리셋을 쓰고 있는 감상 블록들의 평가는 더 이상 표시되지 않아요.`;
+  document.getElementById('confirmOkBtn').onclick = () => {
+    watchRatingPresets = watchRatingPresets.filter(p => p.id !== id);
+    saveWatchRatingPresets();
+    if (pendingWatchRatingPresetId === id) pendingWatchRatingPresetId = null;
+    renderWatchRatingPresetPickerList();
+    refreshWatchRatingSection();
+    closeOverlay('confirmOverlay');
+  };
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+// 유형이 바뀔 때 — 진행도 입력 방식만 퍼센트 ↔ 시리즈 카운터로 바뀐다 (평가는 유형과 무관).
+function onWatchTypeChanged() {
+  document.getElementById('wfProgressField').classList.toggle('hidden', selectedWatchType === 'series');
+  document.getElementById('wfSeriesField').classList.toggle('hidden', selectedWatchType !== 'series');
+}
+
+function onFocusRatioInputChange() {
+  document.getElementById('wfFocusRatioValue').textContent = `${document.getElementById('wfFocusRatio').value}%`;
+}
+function adjustFocusRatioInput(delta) {
+  const input = document.getElementById('wfFocusRatio');
+  input.value = Math.max(0, Math.min(100, parseInt(input.value) + delta));
+  onFocusRatioInputChange();
+}
+
+// 카드에 보여줄 평균 평점(있는 항목만 평균) — 프리셋 미지정이거나 하나도 평가 안 했으면 null.
+function watchRatingAverage(w) {
+  if (!w.ratingPresetId) return null;
+  const preset = getRatingPreset(w.ratingPresetId);
+  if (!preset || !preset.criteria.length || !w.ratings) return null;
+  const vals = preset.criteria.map(c => w.ratings[c.id]).filter(v => typeof v === 'number' && v > 0);
+  if (!vals.length) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
 function toggleWatchArchive(id) {
   const day = ensureDay(viewingWatchDateKey);
   const w = day.watchBlocks.find(x => x.id === id);
@@ -3302,15 +3707,17 @@ function syncWatchArchiveLink(w, dateKey) {
     if (!archiveItem) {
       archiveItem = {
         id: Date.now() + Math.floor(Math.random()*100000),
-        linkedWatchId: w.id, name: w.name, author: w.author, desc: w.desc, type: w.type,
-        progress: w.progress, archived: w.archived,
+        linkedWatchId: w.id, name: w.name, author: w.author, year: w.year, desc: w.desc, type: w.type,
+        progress: w.progress, seriesTotal: w.seriesTotal, seriesCurrent: w.seriesCurrent,
+        focusRatio: w.focusRatio, ratings: w.ratings, ratingPresetId: w.ratingPresetId, archived: w.archived,
         finishedDate: dateKey, memos: (w.memos || []).slice(),
         order: watchArchiveItems.length,
       };
       watchArchiveItems.push(archiveItem);
     } else {
-      archiveItem.name = w.name; archiveItem.author = w.author; archiveItem.desc = w.desc; archiveItem.type = w.type;
-      archiveItem.progress = w.progress; archiveItem.archived = w.archived;
+      archiveItem.name = w.name; archiveItem.author = w.author; archiveItem.year = w.year; archiveItem.desc = w.desc; archiveItem.type = w.type;
+      archiveItem.progress = w.progress; archiveItem.seriesTotal = w.seriesTotal; archiveItem.seriesCurrent = w.seriesCurrent;
+      archiveItem.focusRatio = w.focusRatio; archiveItem.ratings = w.ratings; archiveItem.ratingPresetId = w.ratingPresetId; archiveItem.archived = w.archived;
       archiveItem.finishedDate = dateKey; archiveItem.memos = (w.memos || []).slice();
     }
     saveWatchArchiveItems();
@@ -3326,14 +3733,16 @@ function syncWatchArchiveLink(w, dateKey) {
     if (!plannedItem) {
       plannedItem = {
         id: Date.now() + Math.floor(Math.random()*100000) + 1,
-        linkedWatchId: w.id, name: w.name, author: w.author, desc: w.desc, type: w.type,
-        progress: w.progress, memos: (w.memos || []).slice(),
+        linkedWatchId: w.id, name: w.name, author: w.author, year: w.year, desc: w.desc, type: w.type,
+        progress: w.progress, seriesTotal: w.seriesTotal, seriesCurrent: w.seriesCurrent,
+        focusRatio: w.focusRatio, ratings: w.ratings, ratingPresetId: w.ratingPresetId, memos: (w.memos || []).slice(),
         order: watchPlannedItems.length,
       };
       watchPlannedItems.push(plannedItem);
     } else {
-      plannedItem.name = w.name; plannedItem.author = w.author; plannedItem.desc = w.desc; plannedItem.type = w.type;
-      plannedItem.progress = w.progress; plannedItem.memos = (w.memos || []).slice();
+      plannedItem.name = w.name; plannedItem.author = w.author; plannedItem.year = w.year; plannedItem.desc = w.desc; plannedItem.type = w.type;
+      plannedItem.progress = w.progress; plannedItem.seriesTotal = w.seriesTotal; plannedItem.seriesCurrent = w.seriesCurrent;
+      plannedItem.focusRatio = w.focusRatio; plannedItem.ratings = w.ratings; plannedItem.ratingPresetId = w.ratingPresetId; plannedItem.memos = (w.memos || []).slice();
     }
     saveWatchPlannedItems();
   } else if (plannedItem) {
@@ -3367,6 +3776,57 @@ function renderWatchBlocks() {
   else if (currentWatchSubtab === 'planned') renderWatchPlannedTab();
   else if (currentWatchSubtab === 'archive') renderWatchArchiveTab();
   else if (currentWatchSubtab === 'list') renderWatchListTab();
+}
+
+// 카드 sub 줄에 붙는 발표년도/평점 칩 (있을 때만).
+function watchYearRatingChipsHTML(w) {
+  const avg = watchRatingAverage(w);
+  return `${w.year ? `<span class="time-chip">${w.year}</span>` : ''}${avg !== null ? `<span class="rating-chip">★ ${avg.toFixed(1)}</span>` : ''}`;
+}
+
+// 진행도 표시 — 시리즈는 할일 블록과 같은 카운터(+/-), 그 외는 기존처럼 퍼센트.
+// editable=true면 오늘 진행 중인 카드(직접 조작 가능), false면 예정/종료 탭의 읽기 전용 표시.
+function watchProgressRowHTML(w, editable) {
+  if (w.type === 'series') {
+    const total = w.seriesTotal || 0;
+    const current = w.seriesCurrent || 0;
+    if (editable) {
+      const atMin = current <= 0, atMax = total > 0 && current >= total;
+      return `<button class="ctrl-btn" style="width:28px;height:28px;font-size:16px;" onclick="changeWatchSeriesCounter(${w.id},-1)" ${atMin?'disabled':''} aria-label="감소">−</button>
+        <div class="fraction" style="font-size:16px;min-width:50px;">${current}<span style="font-size:12px;">/${total}</span></div>
+        <button class="ctrl-btn" style="width:28px;height:28px;font-size:16px;" onclick="changeWatchSeriesCounter(${w.id},1)" ${atMax?'disabled':''} aria-label="증가">+</button>`;
+    }
+    return `<span class="watch-progress-btn" style="cursor:default;">${current}/${total}</span>`;
+  }
+  if (editable) {
+    return `<button class="watch-progress-btn" onclick="openWatchProgressEdit(${w.id})">${w.progress}%</button>
+      <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${w.progress}%"></div></div></div>`;
+  }
+  return `<span class="watch-progress-btn" style="cursor:default;">${w.progress}%</span>
+    <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${w.progress}%"></div></div></div>`;
+}
+
+// 집중비율 바 — editable=true(오늘 카드)면 드래그/화살표로 직접 조작 가능, false면 정적 표시.
+function watchFocusRatioRowHTML(w, editable) {
+  const val = w.focusRatio || 0;
+  if (editable) {
+    return `<div class="focus-ratio-row card-focus-ratio">
+      <span class="focus-ratio-label">집중비율</span>
+      <button type="button" class="focus-ratio-arrow" onclick="changeWatchFocusRatio(${w.id},-5)" aria-label="5% 감소">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <input type="range" min="0" max="100" step="5" value="${val}" oninput="onWatchFocusRatioCardInput(${w.id},this.value)" onchange="commitWatchFocusRatio(${w.id},this.value)">
+      <button type="button" class="focus-ratio-arrow" onclick="changeWatchFocusRatio(${w.id},5)" aria-label="5% 증가">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+      <span class="focus-ratio-value">${val}%</span>
+    </div>`;
+  }
+  return `<div class="focus-ratio-row card-focus-ratio readonly">
+    <span class="focus-ratio-label">집중비율</span>
+    <div class="focus-ratio-static-bar"><div class="focus-ratio-static-fill" style="width:${val}%"></div></div>
+    <span class="focus-ratio-value">${val}%</span>
+  </div>`;
 }
 
 function renderWatchOngoing() {
@@ -3407,7 +3867,7 @@ function renderWatchOngoing() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(w.name)}</div>
-            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[w.type]}</span>${w.author ? `<span class="time-chip">${esc(w.author)}</span>` : ''}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[w.type]}</span>${w.author ? `<span class="time-chip">${esc(w.author)}</span>` : ''}${watchYearRatingChipsHTML(w)}</div>
           </div>
           <div class="card-btns">
             <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchMemo(${w.id})" aria-label="감상 메모">
@@ -3427,10 +3887,10 @@ function renderWatchOngoing() {
         </div>
         ${w.desc ? `<div class="block-desc">${escLinkify(w.desc, 32)}</div>` : ''}
         <div class="block-progress-row">
-          <button class="watch-progress-btn" onclick="openWatchProgressEdit(${w.id})">${w.progress}%</button>
-          <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${w.progress}%"></div></div></div>
+          ${watchProgressRowHTML(w, true)}
           ${deltaStr ? `<span class="watch-delta-chip">${deltaStr}</span>` : ''}
         </div>
+        ${watchFocusRatioRowHTML(w, true)}
         <div class="field watch-flag-row" style="margin:8px 0 0;">
           <label class="carryover-label">
             <input type="checkbox" ${w.planned ? 'checked' : ''} onchange="toggleWatchPlanned(${w.id})">
@@ -3486,7 +3946,7 @@ function renderWatchArchiveTab() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(item.name)}</div>
-            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}<span class="time-chip watch-finished-date">${formatArchiveDateLabel(item.finishedDate)}</span>${item.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}${watchYearRatingChipsHTML(item)}<span class="time-chip watch-finished-date">${formatArchiveDateLabel(item.finishedDate)}</span>${item.archived ? '<span class="carryover-chip">보관</span>' : ''}</div>
           </div>
           <div class="card-btns">
             <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchArchiveMemo('archive',${item.id})" aria-label="감상 메모">
@@ -3502,9 +3962,9 @@ function renderWatchArchiveTab() {
         </div>
         ${item.desc ? `<div class="block-desc">${escLinkify(item.desc, 32)}</div>` : ''}
         <div class="block-progress-row">
-          <span class="watch-progress-btn" style="cursor:default;">${item.progress}%</span>
-          <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${item.progress}%"></div></div></div>
+          ${watchProgressRowHTML(item, false)}
         </div>
+        ${watchFocusRatioRowHTML(item, false)}
       </div>
     </div>`;
   }).join('');
@@ -3540,7 +4000,7 @@ function renderWatchPlannedTab() {
         <div class="card-header">
           <div class="card-title-wrap">
             <div class="card-title">${esc(item.name)}</div>
-            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}</div>
+            <div class="card-sub"><span class="type-chip">${WATCH_TYPE_LABEL[item.type]}</span>${item.author ? `<span class="time-chip">${esc(item.author)}</span>` : ''}${watchYearRatingChipsHTML(item)}</div>
           </div>
           <div class="card-btns">
             <button class="timer-icon-btn ${memoCount > 0 ? 'has-time' : ''}" onclick="openWatchArchiveMemo('planned',${item.id})" aria-label="감상 메모">
@@ -3560,9 +4020,9 @@ function renderWatchPlannedTab() {
         </div>
         ${item.desc ? `<div class="block-desc">${escLinkify(item.desc, 32)}</div>` : ''}
         <div class="block-progress-row">
-          <span class="watch-progress-btn" style="cursor:default;">${item.progress}%</span>
-          <div class="prog-wrap"><div class="prog-bar"><div class="prog-fill" style="width:${item.progress}%"></div></div></div>
+          ${watchProgressRowHTML(item, false)}
         </div>
+        ${watchFocusRatioRowHTML(item, false)}
       </div>
     </div>`;
   }).join('');
@@ -3614,8 +4074,16 @@ function openWatchArchiveEdit(kind, id) {
   document.getElementById('watchSheetTitle').textContent = '감상 수정';
   document.getElementById('wfName').value = item.name;
   document.getElementById('wfAuthor').value = item.author || '';
+  document.getElementById('wfYear').value = item.year || '';
   document.getElementById('wfDesc').value = item.desc || '';
   document.getElementById('wfProgress').value = item.progress;
+  document.getElementById('wfSeriesTotal').value = item.seriesTotal || '';
+  document.getElementById('wfSeriesCurrent').value = item.seriesCurrent || 0;
+  document.getElementById('wfFocusRatio').value = item.focusRatio || 0;
+  onFocusRatioInputChange();
+  pendingWatchRatings = Object.assign({}, item.ratings || {});
+  pendingWatchRatingPresetId = item.ratingPresetId || null;
+  refreshWatchRatingSection();
   document.getElementById('wfArchive').checked = kind === 'archive' ? !!item.archived : false;
   document.getElementById('wfPlanned').checked = kind === 'planned';
   // 종료 탭에서 열었으면 '예정' 체크는 의미가 없고, 예정 탭에서 열었으면 '보관' 체크는 의미가 없다.
@@ -3623,6 +4091,7 @@ function openWatchArchiveEdit(kind, id) {
   document.getElementById('wfArchiveField').classList.toggle('hidden', kind === 'planned');
   selectedWatchType = item.type;
   document.querySelectorAll('#wfTypeGroup .seg-btn').forEach(btn => btn.classList.toggle('selected', btn.dataset.val === item.type));
+  onWatchTypeChanged();
   document.getElementById('watchFormOverlay').classList.add('open');
   setTimeout(() => document.getElementById('wfName').focus(), 80);
 }
@@ -4216,7 +4685,7 @@ function openMenu() {
 }
 
 function exportBackup() {
-  const data = { days, carryoverMeta, watchChainMeta, memos, pinnedMemos, planBlocks, periodPlans, watchArchiveItems, watchPlannedItems, watchLists, exportedAt: new Date().toISOString() };
+  const data = { days, carryoverMeta, watchChainMeta, memos, pinnedMemos, planBlocks, periodPlans, watchArchiveItems, watchPlannedItems, watchLists, watchRatingPresets, exportedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -4247,8 +4716,9 @@ function importBackup(e) {
       if (Array.isArray(data.watchArchiveItems)) watchArchiveItems = data.watchArchiveItems;
       if (Array.isArray(data.watchPlannedItems)) watchPlannedItems = data.watchPlannedItems;
       if (Array.isArray(data.watchLists)) watchLists = data.watchLists;
+      if (data.watchRatingPresets && typeof data.watchRatingPresets === 'object') watchRatingPresets = data.watchRatingPresets;
       saveDays(); saveCarryoverMeta(); saveWatchChainMeta(); saveMemos(); savePinnedMemos();
-      savePlanBlocks(); savePeriodPlans(); saveWatchArchiveItems(); saveWatchPlannedItems(); saveWatchLists();
+      savePlanBlocks(); savePeriodPlans(); saveWatchArchiveItems(); saveWatchPlannedItems(); saveWatchLists(); saveWatchRatingPresets();
       syncCarryoversForToday();
       syncWatchForToday();
       renderDayHeader(); renderBlocks();
@@ -4316,3 +4786,7 @@ initWatchSubtabSwipe();
 // 항상 tick 인터벌을 켜둔다. 타이머 시트가 열려있지 않으면 timerTick 내부에서
 // 별다른 동작을 하지 않으므로 가볍다.
 if (!timerTickHandle) timerTickHandle = setInterval(timerTick, 1000);
+
+// 미니 알림도 앱이 열려있는 동안 주기적으로 시각을 확인한다 (20초 간격이면 분 단위 알림엔 충분).
+checkMiniAlarms();
+setInterval(checkMiniAlarms, 20000);

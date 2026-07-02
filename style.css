@@ -750,6 +750,7 @@ body.reordering .move-btns { display: flex; }
 .grid-2col .watch-flag-row,
 .grid-2col .watch-delta-chip,
 .grid-2col .prog-wrap,
+.grid-2col .card-focus-ratio,
 .grid-2col .ref-list,
 .grid-2col .ref-item-missing { display: none; }
 
@@ -768,3 +769,63 @@ body.reordering .move-btns { display: flex; }
 /* 카드 탭으로 열리는 상세 오버레이 — grid-2col 범위 밖이라 압축 CSS가 적용되지 않고
    원래(간단 보기 이전) 모습 그대로 보인다. */
 .card-detail-body .card { margin-bottom: 0; cursor: default; }
+
+/* =========================================================
+   MINI ALARM (미니 시간 알림 블록) — 제목+시간만 있는 1줄짜리 작은 블록
+   ========================================================= */
+.mini-alarm-list { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 10px; }
+.mini-alarm-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--gray-200);
+  border-radius: 9px; background: var(--gray-100); cursor: pointer;
+}
+.mini-alarm-row.fired { opacity: .5; }
+.mini-alarm-icon { width: 14px; height: 14px; color: var(--gray-600); flex-shrink: 0; }
+.mini-alarm-time { font-size: 12.5px; font-weight: 700; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.mini-alarm-title { font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-alarm-delete { width: 20px; height: 20px; border: none; background: none; color: var(--gray-400); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; }
+.mini-alarm-delete svg { width: 12px; height: 12px; }
+
+/* =========================================================
+   집중비율 바 (5%씩 움직이는 수평 바) — 폼과 카드 양쪽에서 재사용
+   ========================================================= */
+.focus-ratio-row { display: flex; align-items: center; gap: 8px; }
+.focus-ratio-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--black); height: 4px; }
+.focus-ratio-arrow {
+  width: 26px; height: 26px; border: 1px solid var(--gray-300); border-radius: 7px; background: none;
+  color: var(--black); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0;
+}
+.focus-ratio-arrow:active { background: var(--gray-100); }
+.focus-ratio-arrow svg { width: 13px; height: 13px; }
+.card-focus-ratio { margin-top: 8px; }
+.focus-ratio-label { font-size: 10.5px; color: var(--gray-600); font-weight: 600; flex-shrink: 0; white-space: nowrap; }
+.focus-ratio-value { font-size: 11px; font-weight: 700; flex-shrink: 0; min-width: 30px; text-align: right; }
+.focus-ratio-static-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--gray-200); overflow: hidden; }
+.focus-ratio-static-fill { height: 100%; background: var(--gray-400); border-radius: 3px; }
+
+/* =========================================================
+   평가 (유형별 커스텀 평가 기준 + 0.5단위 별점)
+   ========================================================= */
+.rating-list { display: flex; flex-direction: column; gap: 8px; }
+.rating-empty { font-size: 12px; color: var(--gray-400); padding: 4px 0; }
+.rating-row { display: flex; align-items: center; gap: 8px; }
+.rating-name { font-size: 12.5px; flex-shrink: 0; width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rating-value { font-size: 11.5px; font-weight: 700; flex-shrink: 0; width: 26px; }
+.rating-remove { width: 22px; height: 22px; border: none; background: none; color: var(--gray-400); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; }
+.rating-remove svg { width: 12px; height: 12px; }
+.rating-add-row { display: flex; gap: 6px; margin-top: 10px; }
+.rating-add-row input { flex: 1; min-width: 0; }
+.rating-add-row .btn-secondary { flex-shrink: 0; }
+
+.star-widget { position: relative; display: inline-block; font-size: 17px; line-height: 1; cursor: pointer; letter-spacing: 1px; flex-shrink: 0; }
+.star-widget .star-empty { color: var(--gray-300); white-space: nowrap; }
+.star-widget .star-filled { position: absolute; top: 0; left: 0; overflow: hidden; color: #f5a623; white-space: nowrap; pointer-events: none; }
+
+.rating-chip { display: inline-flex; align-items: center; font-size: 11px; color: #b8830a; font-weight: 700; margin-right: 6px; }
+
+/* 평가 프리셋 선택 버튼 (유형 선택 버튼과 유사한 톤, 미지정일 때는 옅게) */
+.rating-preset-select-btn {
+  display: block; width: 100%; text-align: left; border: 1px solid var(--gray-300); background: var(--white);
+  border-radius: 9px; padding: 10px 12px; font-size: 13.5px; font-weight: 600; color: var(--black); cursor: pointer;
+}
+.rating-preset-select-btn:active { background: var(--gray-100); }
+.rating-preset-select-btn.unselected { color: var(--gray-400); font-weight: 500; }
